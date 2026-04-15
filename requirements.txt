@@ -1,0 +1,23 @@
+# Core
+numpy==2.0.2
+pandas==2.3.3
+scipy==1.13.1
+scikit-learn==1.6.1
+
+# Deep learning (CUDA 12.1 build — UCL GPU machines)
+# Install with: pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+torch==2.5.1+cu121
+torchvision==0.20.1+cu121
+
+# Visualisation
+matplotlib==3.9.4
+seaborn==0.13.2
+
+# Trajectron++ preprocessing
+dill==0.4.1
+ncls==0.0.70
+orjson==3.11.5
+
+# Training utilities
+tqdm==4.67.3
+tensorboard==2.20.0
