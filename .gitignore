@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+
+# Virtual environment
+crowdnav-env/
+
+# Data (too large for git)
+Trajectron-plus-plus/
+
+# Checkpoints (binary, large)
+checkpoints/*.pt
+
+# Plots (generated, not source)
+eth_ucy_plots/
+
+# pip cache
+.pip-cache/
