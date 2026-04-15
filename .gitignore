@@ -14,10 +14,23 @@ crowdnav-env/
 Trajectron-plus-plus/
 
 # Checkpoints (binary, large)
-checkpoints/*.pt
+checkpoints/
 
 # Plots (generated, not source)
 eth_ucy_plots/
+*.png
+*.jpg
+*.jpeg
 
 # pip cache
 .pip-cache/
+
+# Training logs
+logs/
+
+# Claude Code AI assistant files
+.claude/
+CLAUDE.md
+
+# Notebook checkpoints
+.ipynb_checkpoints/

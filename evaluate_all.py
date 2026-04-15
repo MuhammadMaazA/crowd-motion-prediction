@@ -1,0 +1,279 @@
+"""
+Unified Evaluation Script — D1 Comparison Table
+================================================
+Evaluates CV baseline, Social-LSTM, and Trajectron++ on all 5 ETH/UCY scenes
+and prints a clean comparison table.
+
+Usage
+-----
+source crowdnav-env/bin/activate
+python evaluate_all.py
+
+Requirements
+------------
+- Social-LSTM checkpoints in checkpoints/social_lstm_{scene}.pt
+- Trajectron++ checkpoints in Trajectron-plus-plus/experiments/logs/
+- ETH/UCY data in data/ or Trajectron-plus-plus/experiments/pedestrians/raw/
+"""
+
+import os
+import sys
+import numpy as np
+import torch
+
+WORK = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, WORK)
+
+from eth_ucy_analysis import (
+    load_scene, extract_sequences, extract_sequences_with_neighbours,
+    ade, fde, best_of_k_ade, best_of_k_fde
+)
+from models.cv_baseline import ConstantVelocityPredictor
+from models.social_lstm import SocialLSTM
+
+# ── Scene file paths ───────────────────────────────────────────────────────────
+RAW = os.path.join(WORK, "Trajectron-plus-plus/experiments/pedestrians/raw")
+SCENE_FILES = {
+    "eth":   [os.path.join(RAW, "eth",   "test", "biwi_eth.txt")],
+    "hotel": [os.path.join(RAW, "hotel", "test", "biwi_hotel.txt")],
+    "univ":  [os.path.join(RAW, "univ",  "test", "students001.txt"),
+              os.path.join(RAW, "univ",  "test", "students003.txt")],
+    "zara1": [os.path.join(RAW, "zara1", "test", "crowds_zara01.txt")],
+    "zara2": [os.path.join(RAW, "zara2", "test", "crowds_zara02.txt")],
+}
+
+SCENES = ["eth", "hotel", "univ", "zara1", "zara2"]
+OBS_LEN, PRED_LEN, K = 8, 12, 20
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+
+# ── CV Baseline ────────────────────────────────────────────────────────────────
+
+def eval_cv(scene):
+    data = load_scene(SCENE_FILES[scene])
+    obs, pred = extract_sequences(data, obs_len=OBS_LEN, pred_len=PRED_LEN)
+    if len(obs) == 0:
+        return None
+    cv = ConstantVelocityPredictor(noise_std=0.30)
+    samples = cv.predict_samples(obs, K=K, pred_len=PRED_LEN)   # (N, K, 12, 2)
+    mean_pred = samples[:, 0]                                    # deterministic
+    return {
+        "ade":       ade(mean_pred, pred),
+        "fde":       fde(mean_pred, pred),
+        "minADE_20": best_of_k_ade(samples, pred),
+        "minFDE_20": best_of_k_fde(samples, pred),
+    }
+
+
+# ── Social-LSTM ────────────────────────────────────────────────────────────────
+
+def eval_social_lstm(scene):
+    ckpt_path = os.path.join(WORK, "checkpoints", f"social_lstm_{scene}.pt")
+    if not os.path.exists(ckpt_path):
+        print(f"  [skip] No checkpoint for {scene}")
+        return None
+
+    ckpt = torch.load(ckpt_path, map_location=DEVICE)
+    hp   = ckpt["hparams"]
+
+    model = SocialLSTM(
+        obs_len=OBS_LEN, pred_len=PRED_LEN,
+        hidden_size=hp["hidden_size"],
+        embed_size=hp["embed_size"],
+        pooling_radius=hp["pooling_radius"],
+    ).to(DEVICE)
+    model.load_state_dict(ckpt["model_state"])
+    model.eval()
+
+    data = load_scene(SCENE_FILES[scene])
+    obs, pred, nb_obs, nb_mask = extract_sequences_with_neighbours(
+        data, obs_len=OBS_LEN, pred_len=PRED_LEN, max_neighbours=5
+    )
+    if len(obs) == 0:
+        return None
+
+    obs_t     = torch.tensor(obs,     dtype=torch.float32).to(DEVICE)
+    nb_obs_t  = torch.tensor(np.nan_to_num(nb_obs, nan=0.0), dtype=torch.float32).to(DEVICE)
+    nb_mask_t = torch.tensor(nb_mask, dtype=torch.bool).to(DEVICE)
+
+    with torch.no_grad():
+        preds   = model(obs_t, nb_obs_t, nb_mask_t)
+        mus_np  = preds["mus"].cpu().numpy()
+        samples = model.sample(obs_t, nb_obs_t, nb_mask_t, K=K)  # (N, K, T, 2)
+
+    return {
+        "ade":       ade(mus_np, pred),
+        "fde":       fde(mus_np, pred),
+        "minADE_20": best_of_k_ade(samples, pred),
+        "minFDE_20": best_of_k_fde(samples, pred),
+    }
+
+
+# ── Trajectron++ ───────────────────────────────────────────────────────────────
+
+def eval_trajectronpp(scene):
+    """
+    Load the best Trajectron++ checkpoint for a scene and evaluate on the test set.
+    Looks for checkpoints saved by train.py in experiments/logs/.
+    """
+    import dill
+    sys.path.insert(0, os.path.join(WORK, "Trajectron-plus-plus", "trajectron"))
+
+    try:
+        from model.model_registrar import ModelRegistrar
+        from model.trajectron import Trajectron
+        from argument_parser import args as tpp_args
+    except ImportError as e:
+        print(f"  [skip] Trajectron++ import failed: {e}")
+        return None
+
+    # Find checkpoint directory for this scene
+    log_base = os.path.join(WORK, "Trajectron-plus-plus", "experiments", "logs")
+    scene_dirs = [d for d in os.listdir(log_base) if scene in d] if os.path.exists(log_base) else []
+    if not scene_dirs:
+        print(f"  [skip] No Trajectron++ checkpoint found for {scene}")
+        return None
+
+    ckpt_dir = os.path.join(log_base, sorted(scene_dirs)[-1], "models")
+    if not os.path.exists(ckpt_dir):
+        print(f"  [skip] No models dir in {ckpt_dir}")
+        return None
+
+    # Find highest epoch checkpoint
+    ckpt_files = sorted([f for f in os.listdir(ckpt_dir) if f.endswith(".pt")])
+    if not ckpt_files:
+        print(f"  [skip] No .pt files in {ckpt_dir}")
+        return None
+
+    epoch_ckpt = ckpt_files[-1]
+    epoch_num  = int(epoch_ckpt.split("_")[-1].replace(".pt", ""))
+
+    # Load test data
+    test_pkl = os.path.join(WORK, "Trajectron-plus-plus", "experiments", "processed",
+                            f"{scene}_test.pkl")
+    with open(test_pkl, "rb") as f:
+        test_env = dill.load(f, encoding="latin1")
+
+    # Load model
+    model_reg = ModelRegistrar(ckpt_dir, "cpu")
+    model_reg.load_models(epoch_num)
+
+    conf_path = os.path.join(WORK, "Trajectron-plus-plus", "experiments",
+                             "pedestrians", "models",
+                             f"{scene}_attention_radius_3", "config.json")
+    import json
+    with open(conf_path) as f:
+        hyperparams = json.load(f)
+
+    hyperparams["maximum_history_length"] = 7
+    hyperparams["prediction_horizon"]     = PRED_LEN
+
+    trajectron = Trajectron(model_reg, hyperparams, None, "cpu")
+    trajectron.set_environment(test_env)
+    trajectron.set_annealing_params()
+
+    # Collect predictions and ground truth
+    all_preds, all_gt = [], []
+
+    for scene_obj in test_env.scenes:
+        timesteps = np.arange(0, scene_obj.timesteps)
+
+        with torch.no_grad():
+            predictions = trajectron.predict(
+                scene_obj, timesteps,
+                ph=PRED_LEN,
+                num_samples=K,
+                min_future_timesteps=PRED_LEN,
+                full_dist=False
+            )
+
+        if not predictions:
+            continue
+
+        for ts, node_dict in predictions.items():
+            for node, preds_arr in node_dict.items():
+                # preds_arr shape: (K, T, 2)
+                gt_traj = scene_obj.get_node_timestep_data(
+                    node, ts, ts + PRED_LEN - 1
+                )
+                if gt_traj is None or len(gt_traj) < PRED_LEN:
+                    continue
+                gt_xy = gt_traj[:PRED_LEN, :2]     # (T, 2)
+                all_preds.append(preds_arr)         # (K, T, 2)
+                all_gt.append(gt_xy)
+
+    if not all_preds:
+        print(f"  [skip] No valid predictions for {scene}")
+        return None
+
+    samples_np = np.stack(all_preds)    # (N, K, T, 2)
+    gt_np      = np.stack(all_gt)       # (N, T, 2)
+    mean_pred  = samples_np[:, 0]       # deterministic (first sample)
+
+    return {
+        "ade":       ade(mean_pred, gt_np),
+        "fde":       fde(mean_pred, gt_np),
+        "minADE_20": best_of_k_ade(samples_np, gt_np),
+        "minFDE_20": best_of_k_fde(samples_np, gt_np),
+    }
+
+
+# ── Main ───────────────────────────────────────────────────────────────────────
+
+def fmt(v):
+    return f"{v:.3f}" if v is not None else "  —  "
+
+
+def print_table(results):
+    models = ["CV", "Social-LSTM", "Trajectron++"]
+    metrics = ["ade", "fde", "minADE_20", "minFDE_20"]
+    metric_labels = ["ADE", "FDE", "minADE@20", "minFDE@20"]
+
+    print("\n" + "=" * 75)
+    print(f"{'D1: Prediction Model Comparison — ETH/UCY Leave-One-Out':^75}")
+    print("=" * 75)
+
+    for metric, label in zip(metrics, metric_labels):
+        print(f"\n{label}")
+        header = f"{'Scene':<10}" + "".join(f"{m:>14}" for m in models)
+        print(header)
+        print("-" * len(header))
+        avgs = {m: [] for m in models}
+        for scene in SCENES:
+            row = f"{scene:<10}"
+            for model_name in models:
+                v = results[model_name].get(scene, {})
+                val = v.get(metric) if v else None
+                row += f"{fmt(val):>14}"
+                if val is not None:
+                    avgs[model_name].append(val)
+            print(row)
+        # Average row
+        row = f"{'avg':<10}"
+        for model_name in models:
+            vals = avgs[model_name]
+            row += f"{fmt(np.mean(vals) if vals else None):>14}"
+        print("-" * len(header))
+        print(row)
+
+    print("=" * 75 + "\n")
+
+
+if __name__ == "__main__":
+    print("Evaluating all models on ETH/UCY test sets...")
+
+    results = {"CV": {}, "Social-LSTM": {}, "Trajectron++": {}}
+
+    for scene in SCENES:
+        print(f"\n--- {scene} ---")
+
+        print("  CV baseline...")
+        results["CV"][scene] = eval_cv(scene)
+
+        print("  Social-LSTM...")
+        results["Social-LSTM"][scene] = eval_social_lstm(scene)
+
+        print("  Trajectron++...")
+        results["Trajectron++"][scene] = eval_trajectronpp(scene)
+
+    print_table(results)

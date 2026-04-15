@@ -6,7 +6,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-DATA_DIR = os.path.join(os.path.dirname(__file__), '../data')
+DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data')
 PLOT_DIR = os.path.dirname(__file__)
 
 # List all data files
