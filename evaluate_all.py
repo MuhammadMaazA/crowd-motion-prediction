@@ -134,19 +134,19 @@ def eval_trajectronpp(scene):
         print(f"  [skip] No Trajectron++ checkpoint found for {scene}")
         return None
 
-    ckpt_dir = os.path.join(log_base, sorted(scene_dirs)[-1], "models")
+    ckpt_dir = os.path.join(log_base, sorted(scene_dirs)[-1])
     if not os.path.exists(ckpt_dir):
-        print(f"  [skip] No models dir in {ckpt_dir}")
+        print(f"  [skip] No checkpoint dir found for {scene}")
         return None
 
     # Find highest epoch checkpoint
-    ckpt_files = sorted([f for f in os.listdir(ckpt_dir) if f.endswith(".pt")])
+    ckpt_files = sorted([f for f in os.listdir(ckpt_dir) if f.startswith("model_registrar") and f.endswith(".pt")])
     if not ckpt_files:
         print(f"  [skip] No .pt files in {ckpt_dir}")
         return None
 
     epoch_ckpt = ckpt_files[-1]
-    epoch_num  = int(epoch_ckpt.split("_")[-1].replace(".pt", ""))
+    epoch_num  = int(epoch_ckpt.replace("model_registrar-", "").replace(".pt", ""))
 
     # Load test data
     test_pkl = os.path.join(WORK, "Trajectron-plus-plus", "experiments", "processed",
@@ -172,6 +172,8 @@ def eval_trajectronpp(scene):
     trajectron.set_environment(test_env)
     trajectron.set_annealing_params()
 
+    from utils.trajectory_utils import prediction_output_to_trajectories
+
     # Collect predictions and ground truth
     all_preds, all_gt = [], []
 
@@ -190,17 +192,24 @@ def eval_trajectronpp(scene):
         if not predictions:
             continue
 
-        for ts, node_dict in predictions.items():
-            for node, preds_arr in node_dict.items():
-                # preds_arr shape: (K, T, 2)
-                gt_traj = scene_obj.get_node_timestep_data(
-                    node, ts, ts + PRED_LEN - 1
-                )
-                if gt_traj is None or len(gt_traj) < PRED_LEN:
+        # Use Trajectron++'s own utility to extract (predictions, futures)
+        pred_dict, _, futures_dict = prediction_output_to_trajectories(
+            predictions,
+            dt=scene_obj.dt,
+            max_h=hyperparams["maximum_history_length"],
+            ph=PRED_LEN,
+        )
+
+        for ts in pred_dict:
+            for node in pred_dict[ts]:
+                preds_arr = pred_dict[ts][node]   # (1, K, T, 2) or (K, T, 2)
+                if preds_arr.ndim == 4:
+                    preds_arr = preds_arr[0]       # squeeze to (K, T, 2)
+                gt_xy = futures_dict[ts][node]     # (T, 2)
+                if gt_xy.shape[0] < PRED_LEN:
                     continue
-                gt_xy = gt_traj[:PRED_LEN, :2]     # (T, 2)
-                all_preds.append(preds_arr)         # (K, T, 2)
-                all_gt.append(gt_xy)
+                all_preds.append(preds_arr[:, :PRED_LEN])
+                all_gt.append(gt_xy[:PRED_LEN])
 
     if not all_preds:
         print(f"  [skip] No valid predictions for {scene}")
