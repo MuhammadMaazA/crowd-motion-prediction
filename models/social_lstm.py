@@ -216,15 +216,18 @@ class SocialLSTM(nn.Module):
                  hidden_size: int     = 128,
                  embed_size: int      = 64,
                  pooling_radius: float = 2.0,
-                 dropout: float       = 0.1):
+                 dropout: float       = 0.1,
+                 use_velocity: bool   = False):
         super().__init__()
-        self.obs_len    = obs_len
-        self.pred_len   = pred_len
-        self.hidden_size = hidden_size
+        self.obs_len      = obs_len
+        self.pred_len     = pred_len
+        self.hidden_size  = hidden_size
+        self.use_velocity = use_velocity
 
         # ── Encoder components ──────────────────────────────────────────────
+        enc_input_dim = 4 if use_velocity else 2   # (x,y) or (x,y,vx,vy)
         self.pos_embed_enc = nn.Sequential(
-            nn.Linear(2, embed_size),
+            nn.Linear(enc_input_dim, embed_size),
             nn.ReLU(),
         )
         self.encoder = nn.LSTMCell(embed_size, hidden_size)
@@ -267,6 +270,7 @@ class SocialLSTM(nn.Module):
         h, c       = self._init_hidden(N, device)
         _, M, _, _ = nb_obs.shape
 
+        prev_pos = None
         for t in range(T):
             # Current positions
             focal_pos = obs[:, t, :]           # (N, 2)
@@ -280,8 +284,15 @@ class SocialLSTM(nn.Module):
 
             social_ctx = self.social_pool(focal_pos, h, nb_pos_t, nb_h_t, nb_mask)
 
-            # Encoder step
-            emb      = self.pos_embed_enc(focal_pos)          # (N, embed)
+            # Encoder step — optionally augment with velocity
+            if self.use_velocity:
+                vel = focal_pos - prev_pos if prev_pos is not None else torch.zeros_like(focal_pos)
+                enc_inp = torch.cat([focal_pos, vel], dim=-1)  # (N, 4)
+            else:
+                enc_inp = focal_pos
+            prev_pos = focal_pos
+
+            emb      = self.pos_embed_enc(enc_inp)             # (N, embed)
             h, c     = self.encoder(emb, (h, c))
 
             # Fuse social context: simple additive gate

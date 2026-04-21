@@ -140,7 +140,8 @@ def evaluate(model, val_loader, device, K=20):
 def train(holdout: str, epochs: int = 100, batch_size: int = 64,
           lr: float = 1e-3, hidden_size: int = 128, embed_size: int = 64,
           pooling_radius: float = 2.0, max_neighbours: int = 5,
-          eval_every: int = 10, K_eval: int = 20, device_str: str = "cuda"):
+          eval_every: int = 10, K_eval: int = 20, device_str: str = "cuda",
+          use_velocity: bool = False):
 
     device   = torch.device(device_str if torch.cuda.is_available() else "cpu")
     ckpt_dir = os.path.join(WORK, "checkpoints")
@@ -163,6 +164,7 @@ def train(holdout: str, epochs: int = 100, batch_size: int = 64,
         obs_len=8, pred_len=12,
         hidden_size=hidden_size, embed_size=embed_size,
         pooling_radius=pooling_radius,
+        use_velocity=use_velocity,
     ).to(device)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=1e-4)
@@ -219,7 +221,8 @@ def train(holdout: str, epochs: int = 100, batch_size: int = 64,
             if metrics["ade"] < best_ade:
                 best_ade = metrics["ade"]
                 patience_counter = 0
-                ckpt_path = os.path.join(ckpt_dir, f"social_lstm_{holdout}.pt")
+                suffix    = "v" if use_velocity else ""
+                ckpt_path = os.path.join(ckpt_dir, f"social_lstm{suffix}_{holdout}.pt")
                 torch.save({
                     "epoch":       epoch,
                     "model_state": model.state_dict(),
@@ -227,9 +230,10 @@ def train(holdout: str, epochs: int = 100, batch_size: int = 64,
                     "ade":         best_ade,
                     "holdout":     holdout,
                     "hparams": {
-                        "hidden_size": hidden_size,
-                        "embed_size":  embed_size,
+                        "hidden_size":    hidden_size,
+                        "embed_size":     embed_size,
                         "pooling_radius": pooling_radius,
+                        "use_velocity":   use_velocity,
                     }
                 }, ckpt_path)
                 print(f"  → Saved best checkpoint (ADE={best_ade:.3f})")
@@ -283,6 +287,8 @@ if __name__ == "__main__":
     parser.add_argument("--eval_every", type=int, default=10)
     parser.add_argument("--K",          type=int, default=20)
     parser.add_argument("--device",     type=str, default="cuda")
+    parser.add_argument("--velocity",   action="store_true",
+                        help="Augment encoder input with velocity (dx,dy)")
     args = parser.parse_args()
 
     train(
@@ -297,4 +303,5 @@ if __name__ == "__main__":
         eval_every     = args.eval_every,
         K_eval         = args.K,
         device_str     = args.device,
+        use_velocity   = args.velocity,
     )

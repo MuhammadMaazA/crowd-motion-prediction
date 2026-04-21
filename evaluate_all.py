@@ -29,7 +29,7 @@ from eth_ucy_analysis import (
     ade, fde, best_of_k_ade, best_of_k_fde
 )
 from models.cv_baseline import ConstantVelocityPredictor
-from models.social_lstm import SocialLSTM
+from models.social_lstm import SocialLSTM, bivariate_gaussian_nll
 
 # ── Scene file paths ───────────────────────────────────────────────────────────
 RAW = os.path.join(WORK, "Trajectron-plus-plus/experiments/pedestrians/raw")
@@ -67,24 +67,24 @@ def eval_cv(scene):
 
 # ── Social-LSTM ────────────────────────────────────────────────────────────────
 
-def eval_social_lstm(scene):
-    ckpt_path = os.path.join(WORK, "checkpoints", f"social_lstm_{scene}.pt")
-    if not os.path.exists(ckpt_path):
-        print(f"  [skip] No checkpoint for {scene}")
-        return None
-
+def _load_social_lstm(ckpt_path):
+    """Load a Social-LSTM checkpoint and return (model, data_loader_fn)."""
     ckpt = torch.load(ckpt_path, map_location=DEVICE)
     hp   = ckpt["hparams"]
-
     model = SocialLSTM(
         obs_len=OBS_LEN, pred_len=PRED_LEN,
         hidden_size=hp["hidden_size"],
         embed_size=hp["embed_size"],
         pooling_radius=hp["pooling_radius"],
+        use_velocity=hp.get("use_velocity", False),
     ).to(DEVICE)
     model.load_state_dict(ckpt["model_state"])
     model.eval()
+    return model
 
+
+def _eval_social_lstm_model(model, scene):
+    """Shared eval logic for any Social-LSTM variant."""
     data = load_scene(SCENE_FILES[scene])
     obs, pred, nb_obs, nb_mask = extract_sequences_with_neighbours(
         data, obs_len=OBS_LEN, pred_len=PRED_LEN, max_neighbours=5
@@ -93,6 +93,7 @@ def eval_social_lstm(scene):
         return None
 
     obs_t     = torch.tensor(obs,     dtype=torch.float32).to(DEVICE)
+    pred_t    = torch.tensor(pred,    dtype=torch.float32).to(DEVICE)
     nb_obs_t  = torch.tensor(np.nan_to_num(nb_obs, nan=0.0), dtype=torch.float32).to(DEVICE)
     nb_mask_t = torch.tensor(nb_mask, dtype=torch.bool).to(DEVICE)
 
@@ -100,13 +101,31 @@ def eval_social_lstm(scene):
         preds   = model(obs_t, nb_obs_t, nb_mask_t)
         mus_np  = preds["mus"].cpu().numpy()
         samples = model.sample(obs_t, nb_obs_t, nb_mask_t, K=K)  # (N, K, T, 2)
+        nll_val = bivariate_gaussian_nll(preds, pred_t).item()
 
     return {
         "ade":       ade(mus_np, pred),
         "fde":       fde(mus_np, pred),
         "minADE_20": best_of_k_ade(samples, pred),
         "minFDE_20": best_of_k_fde(samples, pred),
+        "nll":       nll_val,
     }
+
+
+def eval_social_lstm(scene):
+    ckpt_path = os.path.join(WORK, "checkpoints", f"social_lstm_{scene}.pt")
+    if not os.path.exists(ckpt_path):
+        print(f"  [skip] No checkpoint for {scene}")
+        return None
+    return _eval_social_lstm_model(_load_social_lstm(ckpt_path), scene)
+
+
+def eval_social_lstm_v(scene):
+    """Velocity-augmented Social-LSTM (our contribution)."""
+    ckpt_path = os.path.join(WORK, "checkpoints", f"social_lstmv_{scene}.pt")
+    if not os.path.exists(ckpt_path):
+        return None
+    return _eval_social_lstm_model(_load_social_lstm(ckpt_path), scene)
 
 
 # ── Trajectron++ ───────────────────────────────────────────────────────────────
@@ -234,13 +253,18 @@ def fmt(v):
 
 
 def print_table(results):
-    models = ["CV", "Social-LSTM", "Trajectron++"]
-    metrics = ["ade", "fde", "minADE_20", "minFDE_20"]
-    metric_labels = ["ADE", "FDE", "minADE@20", "minFDE@20"]
+    all_models = ["CV", "Social-LSTM", "Social-LSTM+V", "Trajectron++"]
+    # Only show Social-LSTM+V column if any results exist for it
+    has_v = any(results["Social-LSTM+V"].get(s) for s in SCENES)
+    models = all_models if has_v else [m for m in all_models if m != "Social-LSTM+V"]
 
-    print("\n" + "=" * 75)
-    print(f"{'D1: Prediction Model Comparison — ETH/UCY Leave-One-Out':^75}")
-    print("=" * 75)
+    metrics = ["ade", "fde", "minADE_20", "minFDE_20", "nll"]
+    metric_labels = ["ADE", "FDE", "minADE@20", "minFDE@20", "NLL (Social-LSTM only)"]
+
+    width = 10 + 14 * len(models)
+    print("\n" + "=" * width)
+    print(f"{'D1: Prediction Model Comparison — ETH/UCY Leave-One-Out':^{width}}")
+    print("=" * width)
 
     for metric, label in zip(metrics, metric_labels):
         print(f"\n{label}")
@@ -265,13 +289,13 @@ def print_table(results):
         print("-" * len(header))
         print(row)
 
-    print("=" * 75 + "\n")
+    print("=" * width + "\n")
 
 
 if __name__ == "__main__":
     print("Evaluating all models on ETH/UCY test sets...")
 
-    results = {"CV": {}, "Social-LSTM": {}, "Trajectron++": {}}
+    results = {"CV": {}, "Social-LSTM": {}, "Social-LSTM+V": {}, "Trajectron++": {}}
 
     for scene in SCENES:
         print(f"\n--- {scene} ---")
@@ -281,6 +305,9 @@ if __name__ == "__main__":
 
         print("  Social-LSTM...")
         results["Social-LSTM"][scene] = eval_social_lstm(scene)
+
+        print("  Social-LSTM+V...")
+        results["Social-LSTM+V"][scene] = eval_social_lstm_v(scene)
 
         print("  Trajectron++...")
         results["Trajectron++"][scene] = eval_trajectronpp(scene)
