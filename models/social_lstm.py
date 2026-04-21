@@ -230,10 +230,18 @@ class SocialLSTM(nn.Module):
             nn.Linear(enc_input_dim, embed_size),
             nn.ReLU(),
         )
-        self.encoder = nn.LSTMCell(embed_size, hidden_size)
+        self.encoder = nn.LSTMCell(embed_size + hidden_size, hidden_size)
 
         # ── Social pooling ───────────────────────────────────────────────────
         self.social_pool = SocialPooling(hidden_size, embed_size, pooling_radius)
+
+        # ── Neighbour encoder (separate from focal-agent encoder) ────────────
+        # Neighbours always encoded with raw 2-D positions regardless of use_velocity
+        self.pos_embed_nb = nn.Sequential(
+            nn.Linear(2, embed_size),
+            nn.ReLU(),
+        )
+        self.nb_encoder = nn.LSTMCell(embed_size, hidden_size)
 
         # ── Decoder components ───────────────────────────────────────────────
         self.pos_embed_dec = nn.Sequential(
@@ -263,12 +271,18 @@ class SocialLSTM(nn.Module):
 
         Returns
         -------
-        h, c : (N, hidden)  final encoder hidden/cell states
+        h, c        : (N, hidden)       final focal-agent encoder states
+        nb_h_final  : (N, M, hidden)    final per-neighbour encoder states
         """
         N, T, _    = obs.shape
         device     = obs.device
         h, c       = self._init_hidden(N, device)
         _, M, _, _ = nb_obs.shape
+
+        # Per-neighbour LSTM states, flattened to (N*M, hidden) for batched steps
+        nb_h_flat = torch.zeros(N * M, self.hidden_size, device=device)
+        nb_c_flat = torch.zeros(N * M, self.hidden_size, device=device)
+        nb_mask_flat = nb_mask.reshape(N * M).float().unsqueeze(-1)  # (N*M, 1)
 
         prev_pos = None
         for t in range(T):
@@ -276,11 +290,15 @@ class SocialLSTM(nn.Module):
             focal_pos = obs[:, t, :]           # (N, 2)
             nb_pos_t  = nb_obs[:, :, t, :]    # (N, M, 2)
 
-            # Social context using previous hidden states of neighbours
-            # (we use a single shared LSTM, so we reuse h for neighbours too)
-            # For simplicity: tile focal h as proxy neighbour hidden states
-            # (a proper multi-agent implementation would maintain separate LSTMs)
-            nb_h_t = h.unsqueeze(1).expand(N, M, self.hidden_size)
+            # Step neighbour encoders with their own positions
+            nb_pos_flat = nb_pos_t.reshape(N * M, 2)
+            nb_emb_flat = self.pos_embed_nb(nb_pos_flat)          # (N*M, embed)
+            nb_h_flat, nb_c_flat = self.nb_encoder(nb_emb_flat, (nb_h_flat, nb_c_flat))
+            # Zero out absent neighbour slots so they don't accumulate state
+            nb_h_flat = nb_h_flat * nb_mask_flat
+            nb_c_flat = nb_c_flat * nb_mask_flat
+
+            nb_h_t = nb_h_flat.reshape(N, M, self.hidden_size)
 
             social_ctx = self.social_pool(focal_pos, h, nb_pos_t, nb_h_t, nb_mask)
 
@@ -293,12 +311,11 @@ class SocialLSTM(nn.Module):
             prev_pos = focal_pos
 
             emb      = self.pos_embed_enc(enc_inp)             # (N, embed)
-            h, c     = self.encoder(emb, (h, c))
+            enc_inp_with_social = torch.cat([emb, social_ctx], dim=-1)  # (N, embed+hidden)
+            h, c     = self.encoder(enc_inp_with_social, (h, c))
 
-            # Fuse social context: simple additive gate
-            h = h + 0.3 * social_ctx
-
-        return h, c
+        nb_h_final = nb_h_flat.reshape(N, M, self.hidden_size)
+        return h, c, nb_h_final
 
     # ------------------------------------------------------------------
     # Forward pass (returns distribution parameters for decoder rollout)
@@ -340,7 +357,7 @@ class SocialLSTM(nn.Module):
         nb_obs_rel  = nb_obs_safe - nb_origin              # (N, M, obs_len, 2)
         # Keep NaN slots zeroed (they were already zeroed by nan_to_num)
 
-        h, c = self._encode(obs_rel, nb_obs_rel, nb_mask)
+        h, c, nb_h_final = self._encode(obs_rel, nb_obs_rel, nb_mask)
 
         # Decoder rollout (all in relative coords; add origin back at the end)
         mus_list    = []
@@ -350,10 +367,10 @@ class SocialLSTM(nn.Module):
         # Start token: last observed position in relative coords = (0, 0)
         cur_pos = torch.zeros(N, 2, device=device)
 
-        # Neighbour positions in decoder: last observed = their relative origin = 0
+        # Neighbour positions in decoder: last observed = their relative origin = 0.
+        # Future neighbour positions are unknown; nb_h_last seeds from true encoder states.
         nb_pos_last  = torch.zeros(N, nb_obs_safe.shape[1], 2, device=device)
-        M            = nb_obs_safe.shape[1]
-        nb_h_last    = h.unsqueeze(1).expand(N, M, self.hidden_size)
+        nb_h_last    = nb_h_final
         nb_mask_last = nb_mask
 
         for _ in range(self.pred_len):
@@ -375,7 +392,7 @@ class SocialLSTM(nn.Module):
             sigma = torch.exp(torch.clamp(log_s, -4, 4))  # positive
             rho   = torch.tanh(atanh_r)                   # in (-1, 1)
 
-            # Update current position for next step (teacher-force: use µ)
+            # Auto-regressive: feed predicted mean as next decoder input
             cur_pos = mu
 
             mus_list.append(mu)
