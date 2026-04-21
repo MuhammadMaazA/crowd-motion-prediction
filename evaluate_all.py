@@ -146,26 +146,28 @@ def eval_trajectronpp(scene):
         print(f"  [skip] Trajectron++ import failed: {e}")
         return None
 
-    # Find checkpoint directory for this scene
+    # Find the checkpoint directory for this scene that has the highest completed epoch
     log_base = os.path.join(WORK, "Trajectron-plus-plus", "experiments", "logs")
     scene_dirs = [d for d in os.listdir(log_base) if scene in d] if os.path.exists(log_base) else []
     if not scene_dirs:
         print(f"  [skip] No Trajectron++ checkpoint found for {scene}")
         return None
 
-    ckpt_dir = os.path.join(log_base, sorted(scene_dirs)[-1])
-    if not os.path.exists(ckpt_dir):
-        print(f"  [skip] No checkpoint dir found for {scene}")
+    best_dir, best_epoch = None, -1
+    for d in scene_dirs:
+        path = os.path.join(log_base, d)
+        pts = [f for f in os.listdir(path) if f.startswith("model_registrar") and f.endswith(".pt")]
+        if pts:
+            epoch = max(int(f.replace("model_registrar-", "").replace(".pt", "")) for f in pts)
+            if epoch > best_epoch:
+                best_epoch, best_dir = epoch, path
+
+    if best_dir is None:
+        print(f"  [skip] No .pt files found for {scene}")
         return None
 
-    # Find highest epoch checkpoint
-    ckpt_files = sorted([f for f in os.listdir(ckpt_dir) if f.startswith("model_registrar") and f.endswith(".pt")])
-    if not ckpt_files:
-        print(f"  [skip] No .pt files in {ckpt_dir}")
-        return None
-
-    epoch_ckpt = ckpt_files[-1]
-    epoch_num  = int(epoch_ckpt.replace("model_registrar-", "").replace(".pt", ""))
+    ckpt_dir  = best_dir
+    epoch_num = best_epoch
 
     # Load test data
     test_pkl = os.path.join(WORK, "Trajectron-plus-plus", "experiments", "processed",
@@ -238,11 +240,47 @@ def eval_trajectronpp(scene):
     gt_np      = np.stack(all_gt)       # (N, T, 2)
     mean_pred  = samples_np[:, 0]       # deterministic (first sample)
 
+    # NLL via model's eval_loss on the test EnvironmentDataset
+    nll_val = None
+    try:
+        from model.dataset import EnvironmentDataset, collate
+        from torch.utils.data import DataLoader
+
+        nll_dataset = EnvironmentDataset(
+            test_env,
+            hyperparams['state'],
+            hyperparams['pred_state'],
+            scene_freq_mult=False,
+            node_freq_mult=False,
+            hyperparams=hyperparams,
+            min_history_timesteps=hyperparams['minimum_history_length'],
+            min_future_timesteps=hyperparams['prediction_horizon'],
+            return_robot=True,
+        )
+        nll_values = []
+        for node_type_ds in nll_dataset:
+            if len(node_type_ds) == 0:
+                continue
+            node_type = node_type_ds.node_type
+            if node_type not in trajectron.node_models_dict:
+                continue
+            loader = DataLoader(node_type_ds, collate_fn=collate,
+                                batch_size=256, shuffle=False, num_workers=0)
+            for batch in loader:
+                with torch.no_grad():
+                    nll_batch = trajectron.eval_loss(batch, node_type)
+                    nll_values.extend(nll_batch.tolist())
+        if nll_values:
+            nll_val = float(np.mean(nll_values))
+    except Exception as e:
+        print(f"  [warn] Trajectron++ NLL failed: {e}")
+
     return {
         "ade":       ade(mean_pred, gt_np),
         "fde":       fde(mean_pred, gt_np),
         "minADE_20": best_of_k_ade(samples_np, gt_np),
         "minFDE_20": best_of_k_fde(samples_np, gt_np),
+        "nll":       nll_val,
     }
 
 
