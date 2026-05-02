@@ -30,6 +30,8 @@ from eth_ucy_analysis import (
 )
 from models.cv_baseline import ConstantVelocityPredictor
 from models.social_lstm import SocialLSTM, bivariate_gaussian_nll
+from models.trajectory_transformer import TrajectoryTransformer
+from models.diffusion import TrajDiffusion
 
 # ── Scene file paths ───────────────────────────────────────────────────────────
 RAW = os.path.join(WORK, "Trajectron-plus-plus/experiments/pedestrians/raw")
@@ -126,6 +128,52 @@ def eval_social_lstm_v(scene):
     if not os.path.exists(ckpt_path):
         return None
     return _eval_social_lstm_model(_load_social_lstm(ckpt_path), scene)
+
+
+# ── Trajectory Transformer ────────────────────────────────────────────────────
+
+def _load_transformer(ckpt_path):
+    ckpt = torch.load(ckpt_path, map_location=DEVICE, weights_only=False)
+    hp   = ckpt["hparams"]
+    model = TrajectoryTransformer(
+        obs_len=OBS_LEN, pred_len=PRED_LEN,
+        d_model=hp.get("d_model", 128), nhead=hp.get("nhead", 4),
+        num_enc=hp.get("num_enc", 2),   num_dec=hp.get("num_dec", 2),
+        dim_ff=hp.get("dim_ff", 128),
+    ).to(DEVICE)
+    model.load_state_dict(ckpt["model_state"])
+    model.eval()
+    return model
+
+
+def eval_transformer(scene):
+    ckpt_path = os.path.join(WORK, "checkpoints", f"transformer_{scene}.pt")
+    if not os.path.exists(ckpt_path):
+        return None
+    return _eval_social_lstm_model(_load_transformer(ckpt_path), scene)
+
+
+# ── Diffusion ─────────────────────────────────────────────────────────────────
+
+def _load_diffusion(ckpt_path):
+    ckpt = torch.load(ckpt_path, map_location=DEVICE, weights_only=False)
+    hp   = ckpt["hparams"]
+    model = TrajDiffusion(
+        obs_len=OBS_LEN, pred_len=PRED_LEN,
+        d_model=hp.get("d_model", 128), nhead=hp.get("nhead", 4),
+        T=hp.get("T", 100), ddim_steps=hp.get("ddim_steps", 20),
+        lambda_ddpm=hp.get("lambda_ddpm", 0.1),
+    ).to(DEVICE)
+    model.load_state_dict(ckpt["model_state"])
+    model.eval()
+    return model
+
+
+def eval_diffusion(scene):
+    ckpt_path = os.path.join(WORK, "checkpoints", f"diffusion_{scene}.pt")
+    if not os.path.exists(ckpt_path):
+        return None
+    return _eval_social_lstm_model(_load_diffusion(ckpt_path), scene)
 
 
 # ── Trajectron++ ───────────────────────────────────────────────────────────────
@@ -269,7 +317,11 @@ def eval_trajectronpp(scene):
             for batch in loader:
                 with torch.no_grad():
                     nll_batch = trajectron.eval_loss(batch, node_type)
-                    nll_values.extend(nll_batch.tolist())
+                    val = nll_batch.tolist()
+                    if isinstance(val, list):
+                        nll_values.extend(val)
+                    else:
+                        nll_values.append(float(val))
         if nll_values:
             nll_val = float(np.mean(nll_values))
     except Exception as e:
@@ -291,13 +343,14 @@ def fmt(v):
 
 
 def print_table(results):
-    all_models = ["CV", "Social-LSTM", "Social-LSTM+V", "Trajectron++"]
-    # Only show Social-LSTM+V column if any results exist for it
-    has_v = any(results["Social-LSTM+V"].get(s) for s in SCENES)
-    models = all_models if has_v else [m for m in all_models if m != "Social-LSTM+V"]
+    all_models = ["CV", "Social-LSTM", "Social-LSTM+V", "Trajectron++",
+                  "Transformer", "Diffusion"]
+    # Only show optional columns if any results exist
+    models = [m for m in all_models
+              if any(results.get(m, {}).get(s) for s in SCENES)]
 
     metrics = ["ade", "fde", "minADE_20", "minFDE_20", "nll"]
-    metric_labels = ["ADE", "FDE", "minADE@20", "minFDE@20", "NLL (Social-LSTM only)"]
+    metric_labels = ["ADE", "FDE", "minADE@20", "minFDE@20", "NLL"]
 
     width = 10 + 14 * len(models)
     print("\n" + "=" * width)
@@ -333,7 +386,8 @@ def print_table(results):
 if __name__ == "__main__":
     print("Evaluating all models on ETH/UCY test sets...")
 
-    results = {"CV": {}, "Social-LSTM": {}, "Social-LSTM+V": {}, "Trajectron++": {}}
+    results = {"CV": {}, "Social-LSTM": {}, "Social-LSTM+V": {},
+               "Trajectron++": {}, "Transformer": {}, "Diffusion": {}}
 
     for scene in SCENES:
         print(f"\n--- {scene} ---")
@@ -349,5 +403,11 @@ if __name__ == "__main__":
 
         print("  Trajectron++...")
         results["Trajectron++"][scene] = eval_trajectronpp(scene)
+
+        print("  Transformer...")
+        results["Transformer"][scene] = eval_transformer(scene)
+
+        print("  Diffusion...")
+        results["Diffusion"][scene] = eval_diffusion(scene)
 
     print_table(results)
