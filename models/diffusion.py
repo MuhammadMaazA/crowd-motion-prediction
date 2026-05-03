@@ -294,14 +294,38 @@ class TrajDiffusion(nn.Module):
     # Sampling — DDIM
     # ------------------------------------------------------------------
 
+    def _ddim_denoise_chunk(self, x, ctx_K, ddim_ts):
+        """Run DDIM reverse process on a (chunk*K, pred_len, 2) tensor."""
+        device = x.device
+        NK = x.shape[0]
+        for i in range(len(ddim_ts) - 1):
+            t_curr = ddim_ts[i]
+            t_prev = ddim_ts[i + 1]
+            t_batch  = torch.full((NK,), t_curr, dtype=torch.long, device=device)
+            eps_pred = self._denoise(x, t_batch, ctx_K)
+            acp_curr = self.acp[t_curr]
+            x0_pred  = (x - self.sqrt_1m_acp[t_curr] * eps_pred) \
+                     / (self.sqrt_acp[t_curr] + 1e-8)
+            x0_pred  = x0_pred.clamp(-10.0, 10.0)
+            acp_prev = self.acp[t_prev]
+            x = acp_prev.sqrt() * x0_pred + (1 - acp_prev).sqrt() * eps_pred
+        # final step
+        t_batch  = torch.full((NK,), ddim_ts[-1], dtype=torch.long, device=device)
+        eps_pred = self._denoise(x, t_batch, ctx_K)
+        acp_last = self.acp[ddim_ts[-1]]
+        x0_final = (x - (1 - acp_last).sqrt() * eps_pred) / (acp_last.sqrt() + 1e-8)
+        return x0_final.clamp(-10.0, 10.0)
+
     @torch.no_grad()
     def sample(self,
                obs:     torch.Tensor,
                nb_obs:  torch.Tensor,
                nb_mask: torch.Tensor,
-               K: int = 20) -> np.ndarray:
+               K: int = 20,
+               chunk: int = 64) -> np.ndarray:
         """
         Draw K diverse trajectories via DDIM (ddim_steps inference steps).
+        Processes sequences in chunks of `chunk` to avoid OOM on large scenes.
 
         Returns
         -------
@@ -311,39 +335,24 @@ class TrajDiffusion(nn.Module):
         device = obs.device
 
         context, origin = self._encode_context(obs, nb_obs, nb_mask)    # (N, d), (N,1,2)
-
-        # Broadcast context for K samples: (N*K, d)
-        ctx_K   = context.unsqueeze(1).expand(N, K, self.d_model).reshape(N * K, self.d_model)
-
-        # Start from pure Gaussian noise
-        x = torch.randn(N * K, self.pred_len, 2, device=device)
-
         ddim_ts = self.ddim_idx.tolist()
-        for i in range(len(ddim_ts) - 1):
-            t_curr = ddim_ts[i]
-            t_prev = ddim_ts[i + 1]
 
-            t_batch  = torch.full((N * K,), t_curr, dtype=torch.long, device=device)
-            eps_pred = self._denoise(x, t_batch, ctx_K)                 # (N*K, P, 2)
+        all_samples = []
+        for start in range(0, N, chunk):
+            end     = min(start + chunk, N)
+            ctx_c   = context[start:end]                                 # (c, d)
+            orig_c  = origin[start:end]                                  # (c, 1, 2)
+            c       = ctx_c.shape[0]
 
-            acp_curr = self.acp[t_curr]
-            x0_pred  = (x - self.sqrt_1m_acp[t_curr] * eps_pred) \
-                     / (self.sqrt_acp[t_curr] + 1e-8)
-            x0_pred  = x0_pred.clamp(-10.0, 10.0)
+            ctx_K   = ctx_c.unsqueeze(1).expand(c, K, self.d_model).reshape(c * K, self.d_model)
+            x       = torch.randn(c * K, self.pred_len, 2, device=device)
 
-            acp_prev = self.acp[t_prev]
-            x = acp_prev.sqrt() * x0_pred + (1 - acp_prev).sqrt() * eps_pred
+            x0      = self._ddim_denoise_chunk(x, ctx_K, ddim_ts)       # (c*K, P, 2)
+            samps   = x0.reshape(c, K, self.pred_len, 2) + orig_c.unsqueeze(1)
+            all_samples.append(samps.cpu())
 
         # Final step: return clean estimate
-        t_batch  = torch.full((N * K,), ddim_ts[-1], dtype=torch.long, device=device)
-        eps_pred = self._denoise(x, t_batch, ctx_K)
-        acp_last = self.acp[ddim_ts[-1]]
-        x0_final = (x - (1 - acp_last).sqrt() * eps_pred) / (acp_last.sqrt() + 1e-8)
-        x0_final = x0_final.clamp(-10.0, 10.0)
-
-        samples  = x0_final.reshape(N, K, self.pred_len, 2)
-        samples  = samples + origin.unsqueeze(1)                        # back to absolute
-        return samples.cpu().numpy()
+        return torch.cat(all_samples, dim=0).numpy()                    # (N, K, P, 2)
 
     def predict_samples(self,
                         obs:     np.ndarray,
