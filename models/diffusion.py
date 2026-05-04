@@ -73,7 +73,7 @@ class TrajDiffusion(nn.Module):
                  max_nb:       int   = 5,
                  T:            int   = 100,
                  ddim_steps:   int   = 20,
-                 lambda_ddpm:  float = 0.1,
+                 lambda_ddpm:  float = 1.0,
                  dropout:      float = 0.1,
                  use_velocity: bool  = False):
         super().__init__()
@@ -242,7 +242,11 @@ class TrajDiffusion(nn.Module):
         """
         context, origin = self._encode_context(obs, nb_obs, nb_mask)
 
-        raw    = self.gaussian_head(context)                             # (N, pred_len*5)
+        # Detach context so the encoder gradient comes only from the DDPM branch.
+        # This forces the encoder to be a good denoiser conditioner; the Gaussian
+        # head then learns on top of those representations without pulling the
+        # encoder towards a unimodal objective.
+        raw    = self.gaussian_head(context.detach())                   # (N, pred_len*5)
         raw    = raw.reshape(obs.shape[0], self.pred_len, 5)            # (N, P, 5)
 
         mus_rel = raw[:, :, :2]
@@ -270,13 +274,20 @@ class TrajDiffusion(nn.Module):
         N      = obs.shape[0]
         device = obs.device
 
-        # Branch 1: NLL on Gaussian head
-        preds   = self.forward(obs, nb_obs, nb_mask)
+        # Encode once — DDPM branch trains encoder; Gaussian head sees detached context
+        context, origin = self._encode_context(obs, nb_obs, nb_mask)
+        tgt_rel = targets - origin
+
+        # Branch 1: NLL on Gaussian head (detached context, trains head weights only)
+        raw     = self.gaussian_head(context.detach()).reshape(N, self.pred_len, 5)
+        preds   = {
+            "mus":    raw[:, :, :2] + origin,
+            "sigmas": torch.exp(torch.clamp(raw[:, :, 2:4], -4, 4)),
+            "rhos":   torch.tanh(raw[:, :, 4:5]),
+        }
         nll     = bivariate_gaussian_nll(preds, targets)
 
-        # Branch 2: DDPM MSE (trains denoiser, reinforces encoder)
-        context, origin = self._encode_context(obs, nb_obs, nb_mask)
-        tgt_rel = targets - origin                                       # relative coords
+        # Branch 2: DDPM MSE (trains encoder + denoiser via full gradient)
 
         t       = torch.randint(1, self.T + 1, (N,), device=device)
         eps     = torch.randn_like(tgt_rel)
