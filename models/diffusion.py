@@ -5,22 +5,22 @@ DDPM-style generative model conditioned on observed trajectories and neighbours.
 
 Architecture
 ------------
-  Conditioning encoder : Transformer with CLS token aggregates (obs + neighbours)
-  Gaussian head        : Linear head on CLS token → bivariate Gaussian params
-                         (used for forward() and NLL training branch)
-  Denoiser             : Small Transformer takes (noisy_traj, time_embed, context)
-                         → predicted noise (used for DDPM training branch and sampling)
-  Sampling             : DDIM with 20 steps for fast inference
+  Conditioning encoder : Transformer with CLS token — encodes (obs + neighbours)
+                         Returns full sequence (49 tokens) for denoiser cross-attention
+  Gaussian head        : MLP on CLS token → bivariate Gaussian params
+                         Trained on detached context so encoder optimises for denoiser
+  Denoiser             : TransformerDecoder — queries are (time + noisy_traj tokens),
+                         memory is full encoder output via cross-attention (richer than
+                         single CLS token used previously)
+  Sampling             : DDIM with 50 steps, chunked to avoid OOM
 
 Training loss
 -------------
-  L = NLL(Gaussian_head) + 0.1 * MSE(denoiser_noise)
+  L = NLL(Gaussian_head, detached_context) + lambda_ddpm * MSE(denoiser_noise)
+  lambda_ddpm = 1.0  (equal weighting; encoder gradient comes only from DDPM branch)
 
-The Gaussian head gives a differentiable, fast forward() output compatible with
-bivariate_gaussian_nll. The denoiser adds sample diversity via the sample() method.
-
-Data Interface (from eth_ucy_analysis.py) — identical to SocialLSTM
----------------------------------------------------------------------
+Data Interface — identical to SocialLSTM
+-----------------------------------------
   obs     : (N, obs_len, 2)
   nb_obs  : (N, max_nb, obs_len, 2)  NaN = absent
   nb_mask : (N, max_nb) bool
@@ -39,12 +39,12 @@ from models.social_lstm import bivariate_gaussian_nll
 
 def sinusoidal_embedding(t: torch.Tensor, dim: int = 128) -> torch.Tensor:
     """Standard DDPM sinusoidal time embedding. t: (N,) int → (N, dim)."""
-    half   = dim // 2
-    freqs  = torch.exp(
+    half  = dim // 2
+    freqs = torch.exp(
         -math.log(10000) * torch.arange(half, dtype=torch.float32, device=t.device) / (half - 1)
     )
-    args   = t.float().unsqueeze(1) * freqs.unsqueeze(0)   # (N, half)
-    return torch.cat([torch.sin(args), torch.cos(args)], dim=-1)  # (N, dim)
+    args  = t.float().unsqueeze(1) * freqs.unsqueeze(0)
+    return torch.cat([torch.sin(args), torch.cos(args)], dim=-1)
 
 
 class TrajDiffusion(nn.Module):
@@ -58,9 +58,9 @@ class TrajDiffusion(nn.Module):
     d_model      : transformer dimension
     nhead        : attention heads
     max_nb       : maximum neighbours
-    T            : diffusion steps (forward process)
-    ddim_steps   : DDIM inference steps (< T, speeds up sampling)
-    lambda_ddpm  : weight on DDPM MSE auxiliary loss
+    T            : diffusion steps
+    ddim_steps   : DDIM inference steps
+    lambda_ddpm  : weight on DDPM MSE loss (1.0 = equal to NLL)
     dropout      : dropout probability
     use_velocity : unused, kept for training script compatibility
     """
@@ -72,7 +72,7 @@ class TrajDiffusion(nn.Module):
                  nhead:        int   = 4,
                  max_nb:       int   = 5,
                  T:            int   = 100,
-                 ddim_steps:   int   = 20,
+                 ddim_steps:   int   = 50,
                  lambda_ddpm:  float = 1.0,
                  dropout:      float = 0.1,
                  use_velocity: bool  = False):
@@ -84,25 +84,27 @@ class TrajDiffusion(nn.Module):
         self.T           = T
         self.ddim_steps  = ddim_steps
         self.lambda_ddpm = lambda_ddpm
+        # total encoder sequence length: 1 CLS + obs_len focal + max_nb*obs_len nb
+        self.enc_seq_len = 1 + obs_len + max_nb * obs_len
 
-        # ── Shared input projection (focal + neighbours) ─────────────────────
+        # ── Shared input projection ──────────────────────────────────────────
         self.input_proj  = nn.Linear(2, d_model)
         self.obs_pos_enc = nn.Embedding(obs_len,  d_model)
         self.nb_pos_enc  = nn.Embedding(obs_len,  d_model)
 
-        # ── CLS token (BERT-style scene aggregator) ──────────────────────────
+        # ── CLS token ────────────────────────────────────────────────────────
         self.cls_token = nn.Parameter(torch.zeros(1, 1, d_model))
         nn.init.normal_(self.cls_token, std=0.02)
 
         # ── Conditioning encoder (2 Pre-LN layers) ───────────────────────────
         enc_layer = nn.TransformerEncoderLayer(
-            d_model=d_model, nhead=nhead, dim_feedforward=128,
+            d_model=d_model, nhead=nhead, dim_feedforward=256,
             dropout=dropout, batch_first=True, norm_first=True,
         )
         self.cond_encoder = nn.TransformerEncoder(enc_layer, num_layers=2,
                                                   enable_nested_tensor=False)
 
-        # ── Gaussian head: CLS → bivariate Gaussian params for forward() ─────
+        # ── Gaussian head: CLS → bivariate Gaussian (uses detached context) ──
         self.gaussian_head = nn.Sequential(
             nn.Linear(d_model, d_model),
             nn.GELU(),
@@ -120,258 +122,194 @@ class TrajDiffusion(nn.Module):
         self.traj_proj    = nn.Linear(2, d_model)
         self.traj_pos_enc = nn.Embedding(pred_len, d_model)
 
-        # ── Denoiser (2 Pre-LN layers) ───────────────────────────────────────
-        den_layer = nn.TransformerEncoderLayer(
-            d_model=d_model, nhead=nhead, dim_feedforward=128,
+        # ── Denoiser: TransformerDecoder cross-attends to full encoder output ─
+        # Queries: [time_token | traj_tokens] (1 + pred_len tokens)
+        # Memory:  full encoder output (enc_seq_len tokens)  ← richer than CLS only
+        den_layer = nn.TransformerDecoderLayer(
+            d_model=d_model, nhead=nhead, dim_feedforward=256,
             dropout=dropout, batch_first=True, norm_first=True,
         )
-        self.denoiser  = nn.TransformerEncoder(den_layer, num_layers=2,
-                                               enable_nested_tensor=False)
+        self.denoiser   = nn.TransformerDecoder(den_layer, num_layers=3)
         self.noise_proj = nn.Linear(d_model, 2)
 
-        # ── DDPM noise schedule (buffers, not parameters) ────────────────────
-        betas        = torch.linspace(1e-4, 0.02, T)
-        alphas       = 1.0 - betas
-        acp          = torch.cumprod(alphas, dim=0)
-
+        # ── DDPM noise schedule ──────────────────────────────────────────────
+        betas  = torch.linspace(1e-4, 0.02, T)
+        alphas = 1.0 - betas
+        acp    = torch.cumprod(alphas, dim=0)
         self.register_buffer("betas",       betas)
         self.register_buffer("alphas",      alphas)
         self.register_buffer("acp",         acp)
         self.register_buffer("sqrt_acp",    acp.sqrt())
         self.register_buffer("sqrt_1m_acp", (1.0 - acp).sqrt())
 
-        # Precompute DDIM step indices [T-1, T-1-stride, ..., 0]
-        stride    = max(1, T // ddim_steps)
-        ddim_idx  = list(range(T - 1, -1, -stride))
+        # DDIM step indices
+        stride   = max(1, T // ddim_steps)
+        ddim_idx = list(range(T - 1, -1, -stride))
         if ddim_idx[-1] != 0:
             ddim_idx.append(0)
         self.register_buffer("ddim_idx", torch.tensor(ddim_idx, dtype=torch.long))
 
     # ------------------------------------------------------------------
-    # Context encoder helper
+    # Context encoder — returns full sequence for denoiser cross-attention
     # ------------------------------------------------------------------
 
-    def _encode_context(self,
-                        obs:     torch.Tensor,
-                        nb_obs:  torch.Tensor,
-                        nb_mask: torch.Tensor):
+    def _encode_context(self, obs, nb_obs, nb_mask):
         """
         Returns
         -------
-        context : (N, d_model)  — CLS token output from conditioning encoder
-        origin  : (N, 1, 2)    — last observed position (for coord normalisation)
+        enc_out  : (N, enc_seq_len, d_model)  full encoder output
+        context  : (N, d_model)               CLS token (for Gaussian head)
+        src_mask : (N, enc_seq_len) bool       True = ignore (absent nb slots)
+        origin   : (N, 1, 2)
         """
         N      = obs.shape[0]
         device = obs.device
 
-        # Relative normalisation
         origin    = obs[:, -1:, :]
         obs_rel   = obs - origin
-
         nb_safe   = torch.nan_to_num(nb_obs, nan=0.0)
         nb_origin = nb_safe[:, :, -1:, :]
         nb_rel    = nb_safe - nb_origin
 
-        # Token projection
-        t_idx     = torch.arange(self.obs_len, device=device)
-        f_tok     = self.input_proj(obs_rel) + self.obs_pos_enc(t_idx)  # (N, T, d)
-        nb_tok    = self.input_proj(nb_rel)  + self.nb_pos_enc(t_idx)   # (N, M, T, d)
-        nb_flat   = nb_tok.reshape(N, self.max_nb * self.obs_len, self.d_model)
+        t_idx   = torch.arange(self.obs_len, device=device)
+        f_tok   = self.input_proj(obs_rel) + self.obs_pos_enc(t_idx)      # (N, T, d)
+        nb_tok  = self.input_proj(nb_rel)  + self.nb_pos_enc(t_idx)       # (N, M, T, d)
+        nb_flat = nb_tok.reshape(N, self.max_nb * self.obs_len, self.d_model)
 
-        # CLS prepend → [cls | focal_8 | nb_40]
-        cls_exp   = self.cls_token.expand(N, 1, self.d_model)
-        seq       = torch.cat([cls_exp, f_tok, nb_flat], dim=1)         # (N, 49, d)
+        cls_exp  = self.cls_token.expand(N, 1, self.d_model)
+        seq      = torch.cat([cls_exp, f_tok, nb_flat], dim=1)            # (N, 49, d)
 
-        # Padding mask: True = ignore absent neighbour slots
-        nb_tok_mask = (~nb_mask).unsqueeze(-1).expand(
+        nb_tok_mask  = (~nb_mask).unsqueeze(-1).expand(
             N, self.max_nb, self.obs_len
         ).reshape(N, self.max_nb * self.obs_len)
         valid_prefix = torch.zeros(N, 1 + self.obs_len, dtype=torch.bool, device=device)
-        src_mask    = torch.cat([valid_prefix, nb_tok_mask], dim=1)     # (N, 49)
+        src_mask     = torch.cat([valid_prefix, nb_tok_mask], dim=1)      # (N, 49)
 
-        enc_out   = self.cond_encoder(seq, src_key_padding_mask=src_mask)
-        context   = enc_out[:, 0, :]                                    # (N, d) — CLS
+        enc_out  = self.cond_encoder(seq, src_key_padding_mask=src_mask)  # (N, 49, d)
+        context  = enc_out[:, 0, :]                                       # (N, d)
 
-        return context, origin
+        return enc_out, context, src_mask, origin
 
     # ------------------------------------------------------------------
-    # Denoiser helper
+    # Denoiser — cross-attends to full encoder output
     # ------------------------------------------------------------------
 
     def _denoise(self,
-                 x_t:     torch.Tensor,   # (B, pred_len, 2)  noisy trajectory
-                 t:       torch.Tensor,   # (B,)              diffusion timestep
-                 context: torch.Tensor    # (B, d_model)
-                 ) -> torch.Tensor:       # (B, pred_len, 2)  predicted noise
-        B      = x_t.shape[0]
+                 x_t:      torch.Tensor,   # (B, pred_len, 2)
+                 t:        torch.Tensor,   # (B,)
+                 enc_out:  torch.Tensor,   # (B, enc_seq_len, d)
+                 mem_mask: torch.Tensor    # (B, enc_seq_len) bool
+                 ) -> torch.Tensor:        # (B, pred_len, 2)
         device = x_t.device
-
-        t_emb  = self.time_mlp(sinusoidal_embedding(t, self.d_model))   # (B, d)
-
+        t_emb  = self.time_mlp(sinusoidal_embedding(t, self.d_model))    # (B, d)
         p_idx  = torch.arange(self.pred_len, device=device)
-        x_tok  = self.traj_proj(x_t) + self.traj_pos_enc(p_idx)         # (B, P, d)
+        x_tok  = self.traj_proj(x_t) + self.traj_pos_enc(p_idx)          # (B, P, d)
 
-        # Sequence: [time_token | context_token | traj_tokens]
-        seq    = torch.cat([
-            t_emb.unsqueeze(1),       # (B, 1, d)
-            context.unsqueeze(1),     # (B, 1, d)
-            x_tok,                    # (B, P, d)
-        ], dim=1)                                                        # (B, P+2, d)
+        # Queries: time token + noisy trajectory tokens
+        queries = torch.cat([t_emb.unsqueeze(1), x_tok], dim=1)          # (B, P+1, d)
 
-        out    = self.denoiser(seq)                                      # (B, P+2, d)
-        return self.noise_proj(out[:, 2:, :])                            # (B, P, 2)
+        # Cross-attend to full encoder output (richer than single CLS token)
+        out = self.denoiser(queries, enc_out,
+                            memory_key_padding_mask=mem_mask)             # (B, P+1, d)
+        return self.noise_proj(out[:, 1:, :])                             # (B, P, 2)
 
     # ------------------------------------------------------------------
-    # Forward — uses Gaussian head (not denoiser)
+    # Forward — Gaussian head on detached CLS context
     # ------------------------------------------------------------------
 
-    def forward(self,
-                obs:     torch.Tensor,
-                nb_obs:  torch.Tensor,
-                nb_mask: torch.Tensor) -> dict:
-        """
-        Parameters
-        ----------
-        obs     : (N, obs_len, 2)
-        nb_obs  : (N, max_nb, obs_len, 2)
-        nb_mask : (N, max_nb) bool
+    def forward(self, obs, nb_obs, nb_mask) -> dict:
+        _, context, _, origin = self._encode_context(obs, nb_obs, nb_mask)
 
-        Returns
-        -------
-        {"mus": (N,pred_len,2), "sigmas": (N,pred_len,2), "rhos": (N,pred_len,1)}
-        """
-        context, origin = self._encode_context(obs, nb_obs, nb_mask)
-
-        # Detach context so the encoder gradient comes only from the DDPM branch.
-        # This forces the encoder to be a good denoiser conditioner; the Gaussian
-        # head then learns on top of those representations without pulling the
-        # encoder towards a unimodal objective.
-        raw    = self.gaussian_head(context.detach())                   # (N, pred_len*5)
-        raw    = raw.reshape(obs.shape[0], self.pred_len, 5)            # (N, P, 5)
-
-        mus_rel = raw[:, :, :2]
-        log_s   = raw[:, :, 2:4]
-        atanh_r = raw[:, :, 4:5]
-
-        sigmas  = torch.exp(torch.clamp(log_s, -4, 4))
-        rhos    = torch.tanh(atanh_r)
-
+        raw = self.gaussian_head(context.detach()).reshape(
+            obs.shape[0], self.pred_len, 5
+        )
         return {
-            "mus":    mus_rel + origin,
-            "sigmas": sigmas,
-            "rhos":   rhos,
-        }
-
-    # ------------------------------------------------------------------
-    # Loss — NLL + DDPM MSE
-    # ------------------------------------------------------------------
-
-    def nll_loss(self,
-                 obs:     torch.Tensor,
-                 nb_obs:  torch.Tensor,
-                 nb_mask: torch.Tensor,
-                 targets: torch.Tensor) -> torch.Tensor:
-        N      = obs.shape[0]
-        device = obs.device
-
-        # Encode once — DDPM branch trains encoder; Gaussian head sees detached context
-        context, origin = self._encode_context(obs, nb_obs, nb_mask)
-        tgt_rel = targets - origin
-
-        # Branch 1: NLL on Gaussian head (detached context, trains head weights only)
-        raw     = self.gaussian_head(context.detach()).reshape(N, self.pred_len, 5)
-        preds   = {
             "mus":    raw[:, :, :2] + origin,
             "sigmas": torch.exp(torch.clamp(raw[:, :, 2:4], -4, 4)),
             "rhos":   torch.tanh(raw[:, :, 4:5]),
         }
-        nll     = bivariate_gaussian_nll(preds, targets)
 
-        # Branch 2: DDPM MSE (trains encoder + denoiser via full gradient)
+    # ------------------------------------------------------------------
+    # Loss — NLL (Gaussian head) + DDPM MSE (denoiser)
+    # ------------------------------------------------------------------
 
-        t       = torch.randint(1, self.T + 1, (N,), device=device)
-        eps     = torch.randn_like(tgt_rel)
+    def nll_loss(self, obs, nb_obs, nb_mask, targets) -> torch.Tensor:
+        N      = obs.shape[0]
+        device = obs.device
 
-        acp_t   = self.acp[t - 1].view(N, 1, 1)
-        x_t     = self.sqrt_acp[t - 1].view(N, 1, 1) * tgt_rel \
-                + self.sqrt_1m_acp[t - 1].view(N, 1, 1) * eps
+        enc_out, context, src_mask, origin = self._encode_context(obs, nb_obs, nb_mask)
+        tgt_rel = targets - origin
 
-        eps_pred = self._denoise(x_t, t, context)
+        # Branch 1: NLL — Gaussian head with detached context
+        raw  = self.gaussian_head(context.detach()).reshape(N, self.pred_len, 5)
+        preds = {
+            "mus":    raw[:, :, :2] + origin,
+            "sigmas": torch.exp(torch.clamp(raw[:, :, 2:4], -4, 4)),
+            "rhos":   torch.tanh(raw[:, :, 4:5]),
+        }
+        nll = bivariate_gaussian_nll(preds, targets)
+
+        # Branch 2: DDPM MSE — denoiser with full encoder context
+        t        = torch.randint(1, self.T + 1, (N,), device=device)
+        eps      = torch.randn_like(tgt_rel)
+        x_t      = self.sqrt_acp[t-1].view(N,1,1) * tgt_rel \
+                 + self.sqrt_1m_acp[t-1].view(N,1,1) * eps
+        eps_pred = self._denoise(x_t, t, enc_out, src_mask)
         ddpm_mse = F.mse_loss(eps_pred, eps)
 
         return nll + self.lambda_ddpm * ddpm_mse
 
     # ------------------------------------------------------------------
-    # Sampling — DDIM
+    # DDIM sampling — chunked to avoid OOM
     # ------------------------------------------------------------------
 
-    def _ddim_denoise_chunk(self, x, ctx_K, ddim_ts):
-        """Run DDIM reverse process on a (chunk*K, pred_len, 2) tensor."""
-        device = x.device
+    def _ddim_chunk(self, x, enc_out_K, mem_mask_K, ddim_ts, device):
+        """Run DDIM on a (chunk*K, P, 2) batch."""
         NK = x.shape[0]
         for i in range(len(ddim_ts) - 1):
-            t_curr = ddim_ts[i]
-            t_prev = ddim_ts[i + 1]
-            t_batch  = torch.full((NK,), t_curr, dtype=torch.long, device=device)
-            eps_pred = self._denoise(x, t_batch, ctx_K)
-            acp_curr = self.acp[t_curr]
-            x0_pred  = (x - self.sqrt_1m_acp[t_curr] * eps_pred) \
-                     / (self.sqrt_acp[t_curr] + 1e-8)
-            x0_pred  = x0_pred.clamp(-10.0, 10.0)
-            acp_prev = self.acp[t_prev]
-            x = acp_prev.sqrt() * x0_pred + (1 - acp_prev).sqrt() * eps_pred
+            tc, tp   = ddim_ts[i], ddim_ts[i + 1]
+            t_b      = torch.full((NK,), tc, dtype=torch.long, device=device)
+            eps_pred = self._denoise(x, t_b, enc_out_K, mem_mask_K)
+            x0       = (x - self.sqrt_1m_acp[tc] * eps_pred) / (self.sqrt_acp[tc] + 1e-8)
+            x0       = x0.clamp(-15.0, 15.0)
+            x        = self.acp[tp].sqrt() * x0 + (1 - self.acp[tp]).sqrt() * eps_pred
         # final step
-        t_batch  = torch.full((NK,), ddim_ts[-1], dtype=torch.long, device=device)
-        eps_pred = self._denoise(x, t_batch, ctx_K)
-        acp_last = self.acp[ddim_ts[-1]]
-        x0_final = (x - (1 - acp_last).sqrt() * eps_pred) / (acp_last.sqrt() + 1e-8)
-        return x0_final.clamp(-10.0, 10.0)
+        tc   = ddim_ts[-1]
+        t_b  = torch.full((NK,), tc, dtype=torch.long, device=device)
+        eps_pred = self._denoise(x, t_b, enc_out_K, mem_mask_K)
+        x0   = (x - self.sqrt_1m_acp[tc] * eps_pred) / (self.sqrt_acp[tc] + 1e-8)
+        return x0.clamp(-15.0, 15.0)
 
     @torch.no_grad()
-    def sample(self,
-               obs:     torch.Tensor,
-               nb_obs:  torch.Tensor,
-               nb_mask: torch.Tensor,
-               K: int = 20,
-               chunk: int = 64) -> np.ndarray:
-        """
-        Draw K diverse trajectories via DDIM (ddim_steps inference steps).
-        Processes sequences in chunks of `chunk` to avoid OOM on large scenes.
-
-        Returns
-        -------
-        np.ndarray  shape (N, K, pred_len, 2)
-        """
+    def sample(self, obs, nb_obs, nb_mask, K: int = 20, chunk: int = 32) -> np.ndarray:
+        """Returns (N, K, pred_len, 2)."""
         N      = obs.shape[0]
         device = obs.device
-
-        context, origin = self._encode_context(obs, nb_obs, nb_mask)    # (N, d), (N,1,2)
         ddim_ts = self.ddim_idx.tolist()
-
         all_samples = []
+
         for start in range(0, N, chunk):
             end     = min(start + chunk, N)
-            ctx_c   = context[start:end]                                 # (c, d)
-            orig_c  = origin[start:end]                                  # (c, 1, 2)
-            c       = ctx_c.shape[0]
+            c       = end - start
 
-            ctx_K   = ctx_c.unsqueeze(1).expand(c, K, self.d_model).reshape(c * K, self.d_model)
-            x       = torch.randn(c * K, self.pred_len, 2, device=device)
+            enc_c, _, mask_c, orig_c = self._encode_context(
+                obs[start:end], nb_obs[start:end], nb_mask[start:end]
+            )
+            S = enc_c.shape[1]  # enc_seq_len
 
-            x0      = self._ddim_denoise_chunk(x, ctx_K, ddim_ts)       # (c*K, P, 2)
-            samps   = x0.reshape(c, K, self.pred_len, 2) + orig_c.unsqueeze(1)
+            # Expand encoder output and mask for K samples
+            enc_K  = enc_c.unsqueeze(1).expand(c, K, S, self.d_model).reshape(c*K, S, self.d_model)
+            mask_K = mask_c.unsqueeze(1).expand(c, K, S).reshape(c*K, S)
+
+            x   = torch.randn(c * K, self.pred_len, 2, device=device)
+            x0  = self._ddim_chunk(x, enc_K, mask_K, ddim_ts, device)
+
+            samps = x0.reshape(c, K, self.pred_len, 2) + orig_c.unsqueeze(1)
             all_samples.append(samps.cpu())
 
-        # Final step: return clean estimate
-        return torch.cat(all_samples, dim=0).numpy()                    # (N, K, P, 2)
+        return torch.cat(all_samples, dim=0).numpy()
 
-    def predict_samples(self,
-                        obs:     np.ndarray,
-                        nb_obs:  np.ndarray,
-                        nb_mask: np.ndarray,
-                        K:       int = 20,
-                        device:  str = "cuda") -> np.ndarray:
-        """Numpy in → numpy out. Shape (N, K, pred_len, 2)."""
+    def predict_samples(self, obs, nb_obs, nb_mask, K=20, device="cuda") -> np.ndarray:
         dev = torch.device(device if torch.cuda.is_available() else "cpu")
         self.to(dev).eval()
         obs_t     = torch.tensor(obs,                             dtype=torch.float32, device=dev)
@@ -391,13 +329,12 @@ if __name__ == "__main__":
     model  = TrajDiffusion(obs_len=obs_len, pred_len=pred_len)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model  = model.to(device)
-
     print(f"  Parameters: {sum(p.numel() for p in model.parameters()):,}")
 
-    obs     = torch.randn(N, obs_len,  2,           device=device)
-    nb_obs  = torch.randn(N, max_nb,   obs_len, 2,  device=device)
-    nb_mask = torch.ones(N, max_nb,  dtype=torch.bool, device=device)
-    targets = torch.randn(N, pred_len, 2,           device=device)
+    obs     = torch.randn(N, obs_len, 2,          device=device)
+    nb_obs  = torch.randn(N, max_nb, obs_len, 2,  device=device)
+    nb_mask = torch.ones(N, max_nb, dtype=torch.bool, device=device)
+    targets = torch.randn(N, pred_len, 2,          device=device)
 
     preds = model(obs, nb_obs, nb_mask)
     print(f"  mus:    {preds['mus'].shape}")
@@ -409,5 +346,4 @@ if __name__ == "__main__":
 
     samps = model.sample(obs, nb_obs, nb_mask, K=20)
     print(f"  samples: {samps.shape}")
-
     print("Smoke test PASSED.")
