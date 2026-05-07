@@ -73,7 +73,7 @@ class TrajDiffusion(nn.Module):
                  max_nb:       int   = 5,
                  T:            int   = 100,
                  ddim_steps:   int   = 50,
-                 lambda_ddpm:  float = 1.0,
+                 lambda_ddpm:  float = 0.3,
                  dropout:      float = 0.1,
                  use_velocity: bool  = False):
         super().__init__()
@@ -220,7 +220,7 @@ class TrajDiffusion(nn.Module):
     def forward(self, obs, nb_obs, nb_mask) -> dict:
         _, context, _, origin = self._encode_context(obs, nb_obs, nb_mask)
 
-        raw = self.gaussian_head(context.detach()).reshape(
+        raw = self.gaussian_head(context).reshape(
             obs.shape[0], self.pred_len, 5
         )
         return {
@@ -240,8 +240,8 @@ class TrajDiffusion(nn.Module):
         enc_out, context, src_mask, origin = self._encode_context(obs, nb_obs, nb_mask)
         tgt_rel = targets - origin
 
-        # Branch 1: NLL — Gaussian head with detached context
-        raw  = self.gaussian_head(context.detach()).reshape(N, self.pred_len, 5)
+        # Branch 1: NLL — Gaussian head (shared encoder, full gradient)
+        raw  = self.gaussian_head(context).reshape(N, self.pred_len, 5)
         preds = {
             "mus":    raw[:, :, :2] + origin,
             "sigmas": torch.exp(torch.clamp(raw[:, :, 2:4], -4, 4)),

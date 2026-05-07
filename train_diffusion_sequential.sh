@@ -23,7 +23,7 @@ for scene in "${SCENES[@]}"; do
         --batch_size 64 \
         --T 100 \
         --ddim_steps 50 \
-        --lambda_ddpm 1.0
+        --lambda_ddpm 0.3
 
     echo "  Finished $scene at $(date)"
     echo ""
