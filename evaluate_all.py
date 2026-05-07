@@ -224,7 +224,8 @@ def eval_trajectronpp(scene):
         test_env = dill.load(f, encoding="latin1")
 
     # Load model
-    model_reg = ModelRegistrar(ckpt_dir, "cpu")
+    tpp_device = "cuda" if torch.cuda.is_available() else "cpu"
+    model_reg = ModelRegistrar(ckpt_dir, tpp_device)
     model_reg.load_models(epoch_num)
 
     conf_path = os.path.join(WORK, "Trajectron-plus-plus", "experiments",
@@ -237,7 +238,7 @@ def eval_trajectronpp(scene):
     hyperparams["maximum_history_length"] = 7
     hyperparams["prediction_horizon"]     = PRED_LEN
 
-    trajectron = Trajectron(model_reg, hyperparams, None, "cpu")
+    trajectron = Trajectron(model_reg, hyperparams, None, tpp_device)
     trajectron.set_environment(test_env)
     trajectron.set_annealing_params()
 
