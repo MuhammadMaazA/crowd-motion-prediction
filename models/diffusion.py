@@ -263,17 +263,34 @@ class TrajDiffusion(nn.Module):
     # DDIM sampling — chunked to avoid OOM
     # ------------------------------------------------------------------
 
-    def _ddim_chunk(self, x, enc_out_K, mem_mask_K, ddim_ts, device):
-        """Run DDIM on a (chunk*K, P, 2) batch."""
+    def _sample_chunk(self, x, enc_out_K, mem_mask_K, ddim_ts, device, eta: float = 1.0):
+        """
+        Generalised sampler: eta=0 → deterministic DDIM, eta=1 → stochastic DDPM.
+        Higher eta = more diversity in samples (better minADE@20).
+        """
         NK = x.shape[0]
         for i in range(len(ddim_ts) - 1):
             tc, tp   = ddim_ts[i], ddim_ts[i + 1]
             t_b      = torch.full((NK,), tc, dtype=torch.long, device=device)
             eps_pred = self._denoise(x, t_b, enc_out_K, mem_mask_K)
-            x0       = (x - self.sqrt_1m_acp[tc] * eps_pred) / (self.sqrt_acp[tc] + 1e-8)
-            x0       = x0.clamp(-15.0, 15.0)
-            x        = self.acp[tp].sqrt() * x0 + (1 - self.acp[tp]).sqrt() * eps_pred
-        # final step
+
+            acp_c = self.acp[tc]
+            acp_p = self.acp[tp]
+
+            x0    = (x - self.sqrt_1m_acp[tc] * eps_pred) / (acp_c.sqrt() + 1e-8)
+            x0    = x0.clamp(-15.0, 15.0)
+
+            # Stochasticity controlled by eta
+            # sigma^2 = eta^2 * (1-acp_p)/(1-acp_c) * (1 - acp_c/acp_p)
+            sigma2    = (eta ** 2) * (1 - acp_p) / (1 - acp_c + 1e-8) * (1 - acp_c / (acp_p + 1e-8))
+            sigma2    = sigma2.clamp(min=0)
+            direction = ((1 - acp_p - sigma2).clamp(min=0).sqrt()) * eps_pred
+
+            x = acp_p.sqrt() * x0 + direction
+            if eta > 0:
+                x = x + sigma2.sqrt() * torch.randn_like(x)
+
+        # Final clean step (no noise)
         tc   = ddim_ts[-1]
         t_b  = torch.full((NK,), tc, dtype=torch.long, device=device)
         eps_pred = self._denoise(x, t_b, enc_out_K, mem_mask_K)
@@ -281,7 +298,8 @@ class TrajDiffusion(nn.Module):
         return x0.clamp(-15.0, 15.0)
 
     @torch.no_grad()
-    def sample(self, obs, nb_obs, nb_mask, K: int = 20, chunk: int = 32) -> np.ndarray:
+    def sample(self, obs, nb_obs, nb_mask, K: int = 20, chunk: int = 32,
+               eta: float = 1.0) -> np.ndarray:
         """Returns (N, K, pred_len, 2)."""
         N      = obs.shape[0]
         device = obs.device
@@ -302,7 +320,7 @@ class TrajDiffusion(nn.Module):
             mask_K = mask_c.unsqueeze(1).expand(c, K, S).reshape(c*K, S)
 
             x   = torch.randn(c * K, self.pred_len, 2, device=device)
-            x0  = self._ddim_chunk(x, enc_K, mask_K, ddim_ts, device)
+            x0  = self._sample_chunk(x, enc_K, mask_K, ddim_ts, device, eta=eta)
 
             samps = x0.reshape(c, K, self.pred_len, 2) + orig_c.unsqueeze(1)
             all_samples.append(samps.cpu())
