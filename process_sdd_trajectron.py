@@ -86,12 +86,27 @@ def load_scene_df(scene_name):
     return pd.concat(dfs, ignore_index=True).sort_values(["frame","ped"]).reset_index(drop=True)
 
 
+def make_env(scenes_list=None):
+    env = Environment(node_type_list=["PEDESTRIAN"],
+                      standardization=standardization)
+    env.attention_radius = {
+        (env.NodeType.PEDESTRIAN, env.NodeType.PEDESTRIAN): 3.0
+    }
+    if scenes_list is not None:
+        env.scenes = [s for s in scenes_list if s is not None]
+    return env
+
+
+# Build a shared env to get the proper NodeType enum
+_env_ref = make_env()
+PEDESTRIAN_TYPE = _env_ref.NodeType.PEDESTRIAN
+
+
 def df_to_scene(df, scene_name, split, augment_train=True):
     """Convert a trajectory DataFrame to a Trajectron++ Scene object."""
     if len(df) == 0:
         return None
 
-    # Mean-centre positions (Trajectron++ convention)
     df = df.copy()
     df["x"] -= df["x"].mean()
     df["y"] -= df["y"].mean()
@@ -103,9 +118,7 @@ def df_to_scene(df, scene_name, split, augment_train=True):
     for ped_id, grp in df.groupby("ped"):
         grp = grp.sort_values("frame")
         frames = grp["frame"].values
-        # Check for consecutive frames after subsampling
         if len(frames) < 2: continue
-        # Allow small gaps — Trajectron++ handles them via first_timestep
         x  = grp["x"].values
         y  = grp["y"].values
         vx = derivative_of(x, DT)
@@ -116,20 +129,13 @@ def df_to_scene(df, scene_name, split, augment_train=True):
                      ('velocity','x'):vx,('velocity','y'):vy,
                      ('acceleration','x'):ax,('acceleration','y'):ay}
         node_data = pd.DataFrame(data_dict, columns=data_columns)
-        node = Node(node_type="PEDESTRIAN", node_id=str(ped_id),
+        # Use enum NodeType (not string) — required by scene_graph.py
+        node = Node(node_type=PEDESTRIAN_TYPE, node_id=str(ped_id),
                     data=node_data)
         node.first_timestep = int(frames[0])
         scene.nodes.append(node)
 
     return scene if scene.nodes else None
-
-
-def make_env(scenes_list):
-    env = Environment(node_type_list=["PEDESTRIAN"],
-                      standardization=standardization)
-    env.attention_radius = {
-        (env.NodeType.PEDESTRIAN, env.NodeType.PEDESTRIAN): 3.0
-    }
     env.scenes = [s for s in scenes_list if s is not None]
     return env
 
