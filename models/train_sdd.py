@@ -150,7 +150,7 @@ def ckpt_hparams(args):
 
 
 def train(args):
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = torch.device(args.device if torch.cuda.is_available() else "cpu")
     os.makedirs(CKPT_DIR, exist_ok=True)
 
     train_scenes = [s for s in SCENES if s != args.holdout]
@@ -242,5 +242,6 @@ if __name__ == "__main__":
     parser.add_argument("--eval_every", type=int, default=5)
     parser.add_argument("--K",          type=int, default=20)
     parser.add_argument("--patience",   type=int, default=10)
+    parser.add_argument("--device",     type=str, default="cuda")
     args = parser.parse_args()
     train(args)
