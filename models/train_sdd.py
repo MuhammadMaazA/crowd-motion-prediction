@@ -37,6 +37,7 @@ from sdd_analysis import (
 from models.social_lstm import SocialLSTM
 from models.trajectory_transformer import TrajectoryTransformer
 from models.diffusion import TrajDiffusion
+from models.social_gru_v2 import SocialGRUv2
 
 CKPT_DIR = os.path.join(WORK, "checkpoints", "sdd")
 
@@ -125,6 +126,9 @@ def build_model(args):
         return SocialLSTM(obs_len=8, pred_len=12, hidden_size=128,
                           embed_size=64, pooling_radius=2.0,
                           use_velocity=True)
+    elif args.model == "gru_v2":
+        return SocialGRUv2(obs_len=8, pred_len=12, hidden_size=128,
+                           embed_size=64, pooling_radius=2.0)
     elif args.model == "transformer":
         return TrajectoryTransformer(obs_len=8, pred_len=12, d_model=128,
                                      nhead=4, num_enc=2, num_dec=2, dim_ff=128)
@@ -136,7 +140,7 @@ def build_model(args):
 
 
 def ckpt_hparams(args):
-    if args.model in ("social_lstm", "social_lstm_v"):
+    if args.model in ("social_lstm", "social_lstm_v", "gru_v2"):
         return {"hidden_size": 128, "embed_size": 64, "pooling_radius": 2.0,
                 "use_velocity": args.model == "social_lstm_v"}
     elif args.model == "transformer":
@@ -230,7 +234,7 @@ def train(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--model",      type=str, default="transformer",
-                        choices=["social_lstm", "social_lstm_v", "transformer", "diffusion"])
+                        choices=["social_lstm", "social_lstm_v", "gru_v2", "transformer", "diffusion"])
     parser.add_argument("--holdout",    type=str, default="bookstore", choices=SCENES)
     parser.add_argument("--epochs",     type=int, default=50)
     parser.add_argument("--batch_size", type=int, default=128)
