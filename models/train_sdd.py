@@ -92,22 +92,25 @@ def collate_fn(batch):
 
 
 def evaluate(model, val_loader, device, K=20):
+    """Batched evaluation — processes val set in chunks to avoid OOM on large scenes."""
     model.eval()
-    all_obs, all_pred, all_nb_obs, all_nb_mask = [], [], [], []
+    all_mus, all_pred, all_samps = [], [], []
     with torch.no_grad():
         for obs, pred, nb_obs, nb_mask in val_loader:
-            all_obs.append(obs); all_pred.append(pred)
-            all_nb_obs.append(nb_obs); all_nb_mask.append(nb_mask)
+            obs_t     = obs.to(device)
+            nb_obs_t  = nb_obs.to(device)
+            nb_mask_t = nb_mask.to(device)
+            preds     = model(obs_t, nb_obs_t, nb_mask_t)
+            all_mus.append(preds["mus"].cpu().numpy())
+            all_pred.append(pred.numpy())
+            samp = model.sample(obs_t, nb_obs_t, nb_mask_t, K=K)
+            all_samps.append(samp)
 
-    obs_t     = torch.cat(all_obs).to(device)
-    pred_np   = torch.cat(all_pred).numpy()
-    nb_obs_t  = torch.cat(all_nb_obs).to(device)
-    nb_mask_t = torch.cat(all_nb_mask).to(device)
-
-    with torch.no_grad():
-        preds   = model(obs_t, nb_obs_t, nb_mask_t)
-        mus_np  = preds["mus"].cpu().numpy()
-        samples = model.sample(obs_t, nb_obs_t, nb_mask_t, K=K)
+    mus_np    = np.concatenate(all_mus,   axis=0)
+    pred_np   = np.concatenate(all_pred,  axis=0)
+    samples   = np.concatenate(all_samps, axis=0)
+    # dummy placeholders for the old variable names used below
+    obs_t = nb_obs_t = nb_mask_t = None
 
     return {
         "ade":       ade(mus_np, pred_np),
