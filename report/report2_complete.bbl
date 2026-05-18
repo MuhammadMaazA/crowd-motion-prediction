@@ -1,0 +1,91 @@
+\begin{thebibliography}{10}
+
+\bibitem{angelopoulos2021gentle}
+A.~N. Angelopoulos and S.~Bates, ``A gentle introduction to conformal
+  prediction and distribution-free uncertainty quantification,'' 2021.
+\newblock arXiv preprint arXiv:2107.07511.
+
+\bibitem{robicquet2016learning}
+A.~Robicquet, A.~Sadeghian, A.~Alahi, and S.~Savarese, ``Learning social
+  etiquette: Human trajectory understanding in crowded scenes,'' in {\em
+  Proceedings of the European Conference on Computer Vision (ECCV)},
+  pp.~549--565, 2016.
+
+\bibitem{alahi2016social}
+A.~Alahi, K.~Goel, V.~Ramanathan, A.~Robicquet, L.~Fei-Fei, and S.~Savarese,
+  ``{Social LSTM}: Human trajectory prediction in crowded spaces,'' in {\em
+  Proceedings of the IEEE Conference on Computer Vision and Pattern Recognition
+  (CVPR)}, pp.~961--971, 2016.
+
+\bibitem{cho2014learning}
+K.~Cho, B.~van Merri{\"e}nboer, C.~Gulcehre, D.~Bahdanau, F.~Bougares,
+  H.~Schwenk, and Y.~Bengio, ``Learning phrase representations using {RNN}
+  encoder--decoder for statistical machine translation,'' in {\em Proceedings
+  of the Conference on Empirical Methods in Natural Language Processing
+  (EMNLP)}, pp.~1724--1734, 2014.
+
+\bibitem{schuster1997bidirectional}
+M.~Schuster and K.~K. Paliwal, ``Bidirectional recurrent neural networks,''
+  {\em IEEE Transactions on Signal Processing}, vol.~45, no.~11,
+  pp.~2673--2681, 1997.
+
+\bibitem{vaswani2017attention}
+A.~Vaswani, N.~Shazeer, N.~Parmar, J.~Uszkoreit, L.~Jones, A.~N. Gomez,
+  {\L}.~Kaiser, and I.~Polosukhin, ``Attention is all you need,'' {\em Advances
+  in Neural Information Processing Systems (NeurIPS)}, vol.~30, 2017.
+
+\bibitem{xiong2020layer}
+R.~Xiong, Y.~Yang, D.~He, K.~Zheng, S.~Zheng, C.~Xing, H.~Zhang, Y.~Lan,
+  L.~Wang, and T.-Y. Liu, ``On layer normalization in the transformer
+  architecture,'' in {\em Proceedings of the International Conference on
+  Machine Learning (ICML)}, pp.~10524--10533, 2020.
+
+\bibitem{ho2020denoising}
+J.~Ho, A.~Jain, and P.~Abbeel, ``Denoising diffusion probabilistic models,'' in
+  {\em Advances in Neural Information Processing Systems (NeurIPS)}, vol.~33,
+  pp.~6840--6851, 2020.
+
+\bibitem{song2021denoising}
+J.~Song, C.~Meng, and S.~Ermon, ``Denoising diffusion implicit models,'' in
+  {\em International Conference on Learning Representations (ICLR)}, 2021.
+
+\bibitem{salzmann2020trajectron}
+T.~Salzmann, B.~Ivanovic, P.~Chakravarty, and M.~Pavone, ``{Trajectron++}:
+  Dynamically-feasible trajectory forecasting with heterogeneous data,'' in
+  {\em Proceedings of the European Conference on Computer Vision (ECCV)},
+  pp.~683--700, 2020.
+
+\bibitem{pellegrini2009you}
+S.~Pellegrini, A.~Ess, K.~Schindler, and L.~Van~Gool, ``You'll never walk
+  alone: Modeling social behavior for multi-target tracking,'' in {\em
+  Proceedings of the IEEE International Conference on Computer Vision (ICCV)},
+  pp.~261--268, 2009.
+
+\bibitem{lerner2007crowds}
+A.~Lerner, Y.~Chrysanthou, and D.~Lischinski, ``Crowds by example,'' {\em
+  Computer Graphics Forum}, vol.~26, no.~3, pp.~655--664, 2007.
+
+\bibitem{mangalam2020not}
+K.~Mangalam, H.~Girase, S.~Agarwal, K.-H. Lee, E.~Adeli, J.~Malik, and A.~Gao,
+  ``It is not the journey but the destination: Endpoint conditioned trajectory
+  prediction,'' in {\em Proceedings of the European Conference on Computer
+  Vision (ECCV)}, pp.~759--776, 2020.
+
+\bibitem{yuan2021agentformer}
+Y.~Yuan, X.~Weng, Y.~Ou, and K.~Kitani, ``{AgentFormer}: Agent-aware
+  transformers for socio-temporal multi-agent forecasting,'' in {\em
+  Proceedings of the IEEE International Conference on Computer Vision (ICCV)},
+  pp.~9813--9823, 2021.
+
+\bibitem{mao2023leapfrog}
+W.~Mao, C.~Xu, Q.~Zhu, S.~Chen, and Y.~Wang, ``Leapfrog diffusion model for
+  stochastic trajectory prediction,'' in {\em Proceedings of the IEEE/CVF
+  Conference on Computer Vision and Pattern Recognition (CVPR)},
+  pp.~5517--5526, 2023.
+
+\bibitem{kornblith2019better}
+S.~Kornblith, J.~Shlens, and Q.~V. Le, ``Do better {ImageNet} models transfer
+  better?,'' in {\em Proceedings of the IEEE Conference on Computer Vision and
+  Pattern Recognition (CVPR)}, pp.~2661--2671, 2019.
+
+\end{thebibliography}

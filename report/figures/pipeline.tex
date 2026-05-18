@@ -1,0 +1,94 @@
+\begin{tikzpicture}[
+  node distance=0.38cm,
+  pinput/.style={
+    rectangle, rounded corners=3pt,
+    minimum width=2.8cm, minimum height=0.78cm,
+    align=center, text width=2.6cm, inner sep=4pt,
+    fill={rgb,255:red,247;green,250;blue,252},
+    draw={rgb,255:red,74;green,85;blue,104},
+    line width=0.5pt, font=\scriptsize
+  },
+  pTeal/.style={
+    rectangle, rounded corners=3pt,
+    minimum width=4.6cm, minimum height=0.85cm,
+    align=center, text width=4.3cm, inner sep=5pt,
+    fill={rgb,255:red,237;green,242;blue,247},
+    draw={rgb,255:red,44;green,62;blue,80},
+    line width=0.5pt, font=\scriptsize
+  },
+  pPurp/.style={
+    rectangle, rounded corners=3pt,
+    minimum width=4.6cm, minimum height=0.85cm,
+    align=center, text width=4.3cm, inner sep=5pt,
+    fill={rgb,255:red,255;green,245;blue,245},
+    draw={rgb,255:red,116;green,42;blue,42},
+    line width=0.5pt, font=\scriptsize
+  },
+  pAmb/.style={
+    rectangle, rounded corners=3pt,
+    minimum width=4.6cm, minimum height=0.85cm,
+    align=center, text width=4.3cm, inner sep=5pt,
+    fill={rgb,255:red,235;green,244;blue,255},
+    draw={rgb,255:red,43;green,108;blue,176},
+    line width=0.5pt, font=\scriptsize
+  },
+  pCoral/.style={
+    rectangle, rounded corners=3pt,
+    minimum width=4.6cm, minimum height=0.85cm,
+    align=center, text width=4.3cm, inner sep=5pt,
+    fill={rgb,255:red,44;green,62;blue,80},
+    draw={rgb,255:red,44;green,62;blue,80},
+    text=white, line width=0.5pt, font=\scriptsize\bfseries
+  },
+  parr/.style={
+    -{Stealth[length=3.5pt,width=3pt]},
+    line width=0.55pt,
+    color={rgb,255:red,74;green,85;blue,104}
+  },
+]
+
+\node[pTeal] (pre) {%
+  {\bfseries Preprocessing}\\[-2pt]
+  {\tiny Normalisation, scene splitting, formatting}%
+};
+\node[pPurp, below=0.38cm of pre] (train) {%
+  {\bfseries Social-CVAE training}\\[-2pt]
+  {\tiny SDD pretraining learns broad pedestrian dynamics}%
+};
+\node[pPurp, below=0.38cm of train] (finetune) {%
+  {\bfseries ETH/UCY fine-tuning}\\[-2pt]
+  {\tiny Domain adaptation to target benchmark scenes}%
+};
+\node[pAmb, below=0.38cm of finetune] (sample) {%
+  {\bfseries Sampling from learned prior}\\[-2pt]
+  {\tiny Diverse futures through latent variables}%
+};
+\node[pAmb, below=0.38cm of sample] (filter) {%
+  {\bfseries Angle filtering}\\[-2pt]
+  {\tiny Remove implausibly straight or unstable samples}%
+};
+\node[pTeal, below=0.38cm of filter] (synth) {%
+  {\bfseries Filtered synthetic dataset}\\[-2pt]
+  {\tiny Augmentation for downstream model training}%
+};
+\node[pCoral, below=0.38cm of synth] (downstream) {%
+  Downstream predictor and world-model training%
+};
+
+\node[pinput, above=0.65cm of pre] (sdd) {%
+  {\bfseries SDD}\\[-2pt]
+  {\tiny Stanford Drone Dataset}%
+};
+\node[pinput, right=0.9cm of finetune] (eth) {%
+  {\bfseries ETH/UCY}\\[-2pt]
+  {\tiny Pedestrian trajectory benchmark}%
+};
+
+\draw[parr] (sdd.south) -- (pre.north);
+\draw[parr] (eth.west) -- (finetune.east);
+\foreach \from/\to in {pre/train, train/finetune, finetune/sample,
+                       sample/filter, filter/synth, synth/downstream}{
+  \draw[parr] (\from.south) -- (\to.north);
+}
+
+\end{tikzpicture}

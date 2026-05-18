@@ -141,7 +141,7 @@ def train(holdout: str, epochs: int = 100, batch_size: int = 64,
           lr: float = 1e-3, hidden_size: int = 128, embed_size: int = 64,
           pooling_radius: float = 2.0, max_neighbours: int = 5,
           eval_every: int = 10, K_eval: int = 20, device_str: str = "cuda",
-          use_velocity: bool = False):
+          use_velocity: bool = False, pretrain_ckpt: str = None):
 
     device   = torch.device(device_str if torch.cuda.is_available() else "cpu")
     ckpt_dir = os.path.join(WORK, "checkpoints")
@@ -166,6 +166,11 @@ def train(holdout: str, epochs: int = 100, batch_size: int = 64,
         pooling_radius=pooling_radius,
         use_velocity=use_velocity,
     ).to(device)
+
+    if pretrain_ckpt is not None:
+        ckpt = torch.load(pretrain_ckpt, map_location=device)
+        model.load_state_dict(ckpt["model_state"])
+        print(f"  Loaded pretrained weights from {pretrain_ckpt}")
 
     optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=1e-4)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
@@ -222,7 +227,8 @@ def train(holdout: str, epochs: int = 100, batch_size: int = 64,
                 best_ade = metrics["ade"]
                 patience_counter = 0
                 suffix    = "v" if use_velocity else ""
-                ckpt_path = os.path.join(ckpt_dir, f"social_lstm{suffix}_{holdout}.pt")
+                ft_prefix = "ft_" if pretrain_ckpt is not None else ""
+                ckpt_path = os.path.join(ckpt_dir, f"{ft_prefix}social_lstm{suffix}_{holdout}.pt")
                 torch.save({
                     "epoch":       epoch,
                     "model_state": model.state_dict(),
@@ -289,6 +295,8 @@ if __name__ == "__main__":
     parser.add_argument("--device",     type=str, default="cuda")
     parser.add_argument("--velocity",   action="store_true",
                         help="Augment encoder input with velocity (dx,dy)")
+    parser.add_argument("--pretrain_ckpt", type=str, default=None,
+                        help="Path to SDD pretrained checkpoint to fine-tune from")
     args = parser.parse_args()
 
     train(
@@ -304,4 +312,5 @@ if __name__ == "__main__":
         K_eval         = args.K,
         device_str     = args.device,
         use_velocity   = args.velocity,
+        pretrain_ckpt  = args.pretrain_ckpt,
     )

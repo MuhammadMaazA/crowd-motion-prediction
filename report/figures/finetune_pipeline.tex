@@ -1,0 +1,73 @@
+\begin{tikzpicture}[
+  node distance=0.38cm,
+  pinput/.style={rectangle, rounded corners=3pt,
+    minimum width=2.8cm, minimum height=0.78cm,
+    align=center, text width=2.6cm, inner sep=4pt,
+    fill={rgb,255:red,247;green,250;blue,252},
+    draw={rgb,255:red,74;green,85;blue,104},
+    line width=0.5pt, font=\scriptsize},
+  pTeal/.style={rectangle, rounded corners=3pt,
+    minimum width=4.6cm, minimum height=0.85cm,
+    align=center, text width=4.3cm, inner sep=5pt,
+    fill={rgb,255:red,237;green,242;blue,247},
+    draw={rgb,255:red,44;green,62;blue,80},
+    line width=0.5pt, font=\scriptsize},
+  pPurp/.style={rectangle, rounded corners=3pt,
+    minimum width=4.6cm, minimum height=0.85cm,
+    align=center, text width=4.3cm, inner sep=5pt,
+    fill={rgb,255:red,237;green,233;blue,254},
+    draw={rgb,255:red,83;green,74;blue,183},
+    line width=0.5pt, font=\scriptsize},
+  pAmb/.style={rectangle, rounded corners=3pt,
+    minimum width=4.6cm, minimum height=0.85cm,
+    align=center, text width=4.3cm, inner sep=5pt,
+    fill={rgb,255:red,235;green,244;blue,255},
+    draw={rgb,255:red,43;green,108;blue,176},
+    line width=0.5pt, font=\scriptsize},
+  pFinal/.style={rectangle, rounded corners=3pt,
+    minimum width=4.6cm, minimum height=0.85cm,
+    align=center, text width=4.3cm, inner sep=5pt,
+    fill={rgb,255:red,44;green,62;blue,80},
+    draw={rgb,255:red,44;green,62;blue,80},
+    text=white, line width=0.5pt, font=\scriptsize\bfseries},
+  parr/.style={-{Stealth[length=4pt,width=3.5pt]},
+    line width=0.5pt,
+    color={rgb,255:red,74;green,85;blue,104}},
+]
+
+  %% ── Pipeline nodes ──────────────────────────────────────────
+  \node[pTeal] (pre) {%
+    {\bfseries Pretraining on SDD}\\[-2pt]
+    {\tiny leave-one-scene-out;\;all 5 model architectures}};
+  \node[pPurp, below=0.38cm of pre] (ckpt) {%
+    {\bfseries Pretrained Checkpoint}\\[-2pt]
+    {\tiny SDD-pretrained weights\;(8 scenes ${\times}$ 5 models)}};
+  \node[pAmb, below=0.38cm of ckpt] (ft) {%
+    {\bfseries Fine-tuning on ETH/UCY + Synthetic}\\[-2pt]
+    {\tiny LR${\div}10$,\;${\leq}50$ epochs,\;early stopping}};
+  \node[pAmb, below=0.38cm of ft] (ftckpt) {%
+    {\bfseries Fine-tuned Checkpoint}\\[-2pt]
+    {\tiny one per model ${\times}$ 5 ETH/UCY held-out scenes}};
+  \node[pFinal, below=0.38cm of ftckpt] (eval) {%
+    ETH/UCY Evaluation (ADE / FDE / NLL)};
+
+  %% ── Input nodes ─────────────────────────────────────────────
+  \node[pinput, above=0.65cm of pre] (sdd) {%
+    {\bfseries SDD}\\[-2pt]
+    {\tiny 8 scenes,\;${\sim}249$k seqs}};
+  \node[pinput, right=0.9cm of ft] (eth) {%
+    {\bfseries ETH/UCY}\\[-2pt]
+    {\tiny 5 scenes,\;target benchmark}};
+  \node[pinput, below=0.38cm of eth] (synth) {%
+    {\bfseries Synthetic Data}\\[-2pt]
+    {\tiny from residual crowd model}};
+
+  %% ── Arrows ──────────────────────────────────────────────────
+  \draw[parr] (sdd.south)  -- (pre.north);
+  \draw[parr] (eth.west)   -- (ft.east);
+  \draw[parr] (synth.west) -- (ft.east);
+
+  \foreach \f/\t in {pre/ckpt, ckpt/ft, ft/ftckpt, ftckpt/eval}
+    \draw[parr] (\f.south) -- (\t.north);
+
+\end{tikzpicture}

@@ -30,6 +30,7 @@ from eth_ucy_analysis import (
 )
 from models.cv_baseline import ConstantVelocityPredictor
 from models.social_lstm import SocialLSTM, bivariate_gaussian_nll
+from models.social_gru_v2 import SocialGRUv2
 from models.trajectory_transformer import TrajectoryTransformer
 from models.diffusion import TrajDiffusion
 
@@ -128,6 +129,27 @@ def eval_social_lstm_v(scene):
     if not os.path.exists(ckpt_path):
         return None
     return _eval_social_lstm_model(_load_social_lstm(ckpt_path), scene)
+
+
+# ── Social-GRU v2 ─────────────────────────────────────────────────────────────
+
+def eval_gru_v2(scene):
+    """Bidirectional Social-GRU v2."""
+    ckpt_path = os.path.join(WORK, "checkpoints", f"social_gruv2_{scene}.pt")
+    if not os.path.exists(ckpt_path):
+        return None
+    ckpt = torch.load(ckpt_path, map_location=DEVICE, weights_only=False)
+    hp   = ckpt["hparams"]
+    model = SocialGRUv2(
+        obs_len=OBS_LEN, pred_len=PRED_LEN,
+        hidden_size=hp.get("hidden_size", 128),
+        embed_size=hp.get("embed_size", 64),
+        pooling_radius=hp.get("pooling_radius", 2.0),
+        use_velocity=hp.get("use_velocity", False),
+    ).to(DEVICE)
+    model.load_state_dict(ckpt["model_state"])
+    model.eval()
+    return _eval_social_lstm_model(model, scene)
 
 
 # ── Trajectory Transformer ────────────────────────────────────────────────────
@@ -344,8 +366,8 @@ def fmt(v):
 
 
 def print_table(results):
-    all_models = ["CV", "Social-LSTM", "Social-LSTM+V", "Trajectron++",
-                  "Transformer", "Diffusion"]
+    all_models = ["CV", "Social-LSTM", "Social-LSTM+V", "GRU-v2",
+                  "Trajectron++", "Transformer", "Diffusion"]
     # Only show optional columns if any results exist
     models = [m for m in all_models
               if any(results.get(m, {}).get(s) for s in SCENES)]
@@ -387,7 +409,7 @@ def print_table(results):
 if __name__ == "__main__":
     print("Evaluating all models on ETH/UCY test sets...")
 
-    results = {"CV": {}, "Social-LSTM": {}, "Social-LSTM+V": {},
+    results = {"CV": {}, "Social-LSTM": {}, "Social-LSTM+V": {}, "GRU-v2": {},
                "Trajectron++": {}, "Transformer": {}, "Diffusion": {}}
 
     for scene in SCENES:
@@ -401,6 +423,9 @@ if __name__ == "__main__":
 
         print("  Social-LSTM+V...")
         results["Social-LSTM+V"][scene] = eval_social_lstm_v(scene)
+
+        print("  GRU-v2...")
+        results["GRU-v2"][scene] = eval_gru_v2(scene)
 
         print("  Trajectron++...")
         results["Trajectron++"][scene] = eval_trajectronpp(scene)

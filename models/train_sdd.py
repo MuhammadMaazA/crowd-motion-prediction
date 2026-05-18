@@ -177,10 +177,22 @@ def train(args):
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
         optimizer, mode="min", patience=5, factor=0.5)
 
+    start_epoch = 1
     best_ade, patience_counter = float("inf"), 0
     train_losses, val_ades = [], []
 
-    for epoch in range(1, args.epochs + 1):
+    if args.resume:
+        ckpt_path = os.path.join(CKPT_DIR, f"{args.model}_{args.holdout}.pt")
+        if os.path.exists(ckpt_path):
+            ckpt = torch.load(ckpt_path, map_location=device)
+            model.load_state_dict(ckpt["model_state"])
+            best_ade   = ckpt.get("ade", float("inf"))
+            start_epoch = ckpt.get("epoch", 0) + 1
+            print(f"Resumed from epoch {start_epoch - 1}  (best ADE so far: {best_ade:.3f})")
+        else:
+            print(f"No checkpoint found at {ckpt_path}, starting from scratch.")
+
+    for epoch in range(start_epoch, args.epochs + 1):
         model.train()
         epoch_loss, n_batches = 0.0, 0
         for obs, pred, nb_obs, nb_mask in train_loader:
@@ -246,5 +258,7 @@ if __name__ == "__main__":
     parser.add_argument("--K",          type=int, default=20)
     parser.add_argument("--patience",   type=int, default=10)
     parser.add_argument("--device",     type=str, default="cuda")
+    parser.add_argument("--resume",     action="store_true",
+                        help="Resume from existing checkpoint (loads model state, continues training)")
     args = parser.parse_args()
     train(args)

@@ -1,6 +1,6 @@
 # Project Progress Summary
 
-Last updated: 2026-05-08 14:43 BST
+Last updated: 2026-05-17 BST
 
 ## Current Status
 
@@ -115,37 +115,47 @@ SDD scale:
 - 60 annotation videos
 - about 249k extracted trajectory sequences
 
-Training progress so far:
+SDD training is now complete for 5 of 6 models. All 40 checkpoints are in `checkpoints/sdd/`.
 
-| Model | Scene | Best ADE ↓ | Status |
-|---|---|---:|---|
-| Social-LSTM | all 8 scenes | complete | complete |
-| Social-LSTM+V | bookstore | 0.508 | complete |
-| Social-LSTM+V | coupa | 0.451 | complete |
-| Social-LSTM+V | deathCircle | 0.920 | complete |
-| Social-LSTM+V | gates | 0.832 | complete |
-| Social-LSTM+V | hyang | 0.594 | complete |
-| Social-LSTM+V | little | 0.948 | complete |
-| Social-LSTM+V | nexus | 0.586 | complete |
-| Social-LSTM+V | quad | 0.405 | complete |
-| Transformer | bookstore | 0.504 | complete |
-| Transformer | coupa | 0.454 | complete |
-| Transformer | deathCircle | pending | running |
+### SDD Evaluation Results (5 models, averaged over 8 scenes)
 
-Current SDD run:
+| Model | ADE ↓ | FDE ↓ | minADE@20 ↓ | minFDE@20 ↓ | NLL ↓ |
+|---|---:|---:|---:|---:|---:|
+| CV Baseline | 0.926 | 1.620 | 0.797 | 1.154 | — |
+| Social-LSTM | 0.672 | 1.358 | 0.783 | 0.621 | 1.162 |
+| Social-LSTM+V | **0.656** | 1.340 | **0.755** | **0.604** | 1.289 |
+| GRU-v2 | 0.667 | 1.379 | 0.793 | 0.625 | 1.331 |
+| Transformer | 0.657 | **1.326** | 0.808 | 0.633 | 1.474 |
+| Diffusion | 0.673 | 1.335 | 1.710 | 3.159 | 1.683 |
+| Trajectron++ | — | — | — | — | — (still training) |
 
-- Model: Transformer
-- Scene: `deathCircle`
-- Latest observed progress: epoch 25/50
-- Remaining after current scene:
-  - Transformer: `gates`, `hyang`, `little`, `nexus`, `quad`
-  - Diffusion: all 8 SDD scenes
+### Per-scene SDD ADE
 
-Estimated remaining time at the latest check:
+| Scene | CV | SLSTM | SLSTM+V | GRU-v2 | Transf | Diffusion |
+|---|---:|---:|---:|---:|---:|---:|
+| bookstore | 0.759 | 0.510 | 0.508 | 0.505 | 0.504 | 0.513 |
+| coupa | 0.718 | 0.465 | 0.451 | 0.463 | 0.454 | 0.464 |
+| deathCircle | 1.298 | 0.926 | 0.920 | 0.933 | 0.939 | 0.933 |
+| gates | 1.068 | 0.831 | 0.832 | 0.823 | 0.826 | 0.837 |
+| hyang | 0.874 | 0.596 | 0.594 | 0.591 | 0.604 | 0.596 |
+| little | 1.236 | 0.958 | 0.948 | 0.965 | 0.968 | 0.976 |
+| nexus | 0.879 | 0.583 | 0.586 | 0.588 | 0.591 | 0.589 |
+| quad | 0.576 | 0.507 | 0.405 | 0.468 | 0.366 | 0.476 |
 
-- Transformer remaining: about 5-7 hours
-- Diffusion remaining: about 10-14 hours
-- Total SDD remaining: about 15-21 hours
+### Trajectron++ SDD Training Status (as of 2026-05-16)
+
+**Primary machine**: 4× GTX TITAN X (11.91 GiB each), `cuda:0–3`.
+All 4 processes launched via `nohup` and writing to separate log files. Do **not** start anything new on this machine without checking GPU usage first (`nvidia-smi`).
+
+| GPU | Script | Log file | Scene(s) | Epoch (approx) | ETA |
+|---|---|---|---|---|---|
+| cuda:3 | `train_trajectron_sdd.sh` | `logs/tpp_sdd_train2.log` | bookstore ✅ → **coupa** (redundant) | epoch 1 (coupa) | — |
+| cuda:0 | `train_tpp_sdd_gpu0.sh` | `logs/tpp_sdd_gpu0.log` | **coupa** → little → quad | ~31/100 (coupa) | ~3 days |
+| cuda:1 | `train_tpp_sdd_gpu1.sh` | `logs/tpp_sdd_gpu1.log` | **deathCircle** → nexus | ~32/100 (deathCircle) | ~3 days |
+| cuda:2 | `train_tpp_sdd_gpu2.sh` | `logs/tpp_sdd_gpu2.log` | **gates** → hyang | ~29/100 (gates) | ~3+ days |
+
+T++ is slow because: ~1.7s/batch × 3,500–4,000 batches/epoch × 100 epochs ≈ 6–8 days per scene.
+All other T++ SDD runs will be added to `evaluate_sdd.py` once checkpoints are available in `Trajectron-plus-plus/experiments/logs_sdd/`.
 
 ## Work Completed So Far
 
@@ -177,21 +187,47 @@ Report-ready findings:
 - Velocity input gives a small but consistent Social-LSTM improvement.
 - Metric choice matters: ADE/FDE reward accuracy, minADE/minFDE reward diversity, and NLL rewards calibration.
 
+## Fine-tuning Results (DONE)
+
+SDD → ETH/UCY fine-tuning completed for all 5 models. Results stored in `results_ft.json`.
+
+ETH/UCY ADE (averaged over 5 scenes), scratch vs fine-tuned:
+
+| Model | Scratch | SDD FT | Δ |
+|---|---:|---:|---:|
+| Social-LSTM | 0.596 | **0.537** | −9.9% |
+| SLSTM+V | 0.585 | 0.555 | −5.1% |
+| GRU-v2 | 0.586 | 0.549 | −6.3% |
+| Transformer | **0.568** | 0.570 | +0.4% |
+| Diffusion | 0.579 | 0.535 | −7.6% |
+
+Key finding: SDD pretraining helps recurrent models (−6 to −10% ADE) but the Transformer is already near-optimal from scratch (+0.4%). FT does not help Diffusion minADE@20 (1.174 → 1.157), confirming the diversity limit is architectural.
+
+Full per-scene FT results: see `results_ft.json`. Fine-tuned checkpoints: `checkpoints/ft_*.pt`.
+
 ## Next Steps
 
-Short-term:
+### Immediate
 
-- Let SDD Transformer and Diffusion training finish.
-- Write `evaluate_sdd.py` to summarise SDD results.
-- Add SDD results table to `RESULTS.md`.
-- Use SDD checkpoints for pretrain -> ETH/UCY fine-tuning experiments.
+- **T++ SDD** — wait for GPU0/1/2 to reach epoch 100 (~3 days). Once done, add T++ to `evaluate_sdd.py` and regenerate SDD plots. Scenes: coupa, deathCircle, gates, hyang, little, nexus, quad (bookstore already done).
+- **Kill redundant coupa** on `cuda:3` (train2.log) once GPU0 coupa finishes, to free GPU.
 
-Potential high-value ablation:
+### Short-term
 
-- Pretrain Transformer on SDD, fine-tune on ETH/UCY.
-- Pretrain Diffusion on SDD, fine-tune on ETH/UCY.
-- Compare against ETH/UCY-from-scratch results.
+- Add GRU-v2 to `evaluate_all.py` (ETH/UCY table) — no training needed, checkpoints at `checkpoints/social_gruv2_{scene}.pt`
+- Once T++ SDD checkpoints available: regenerate SDD comparison plots with T++ row
+- Regenerate fine-tuning plots with final results for report figures
 
-This would give a strong report story:
+### Report
 
-> Large-scale SDD pretraining improves general pedestrian motion modelling, while ETH/UCY fine-tuning adapts to the target benchmark scenes.
+IEEE conference draft (`report/main.tex`) created on 2026-05-17. Currently **4 pages** covering:
+- Section III: Methodology (all 5 model architectures + equations + 4 TikZ figures)
+- Section IV: Experimental Setup
+- Section V: Results (Tables I–III) + Discussion
+
+Placeholders left for: Abstract, Introduction, Project Management, Conclusions (joint team sections).
+
+Bibliography style: `ieeetr` (system-available). Replace with `IEEEtran` on Overleaf or when package is available.
+
+Figures in `report/figures/`: `social_lstm.tex`, `transformer.tex`, `diffusion.tex`, `finetune_pipeline.tex`.
+

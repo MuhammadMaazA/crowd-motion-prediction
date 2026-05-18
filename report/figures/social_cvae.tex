@@ -1,0 +1,102 @@
+\begin{tikzpicture}[
+  node distance=0.4cm,
+  pGray/.style={
+    rectangle, rounded corners=2pt,
+    minimum width=2.6cm, minimum height=0.72cm,
+    align=center, text width=2.4cm, inner sep=3pt,
+    fill={rgb,255:red,247;green,250;blue,252},
+    draw={rgb,255:red,74;green,85;blue,104},
+    line width=0.4pt, font=\scriptsize
+  },
+  pTeal/.style={
+    rectangle, rounded corners=2pt,
+    minimum width=4.4cm, minimum height=0.78cm,
+    align=center, text width=4.2cm, inner sep=4pt,
+    fill={rgb,255:red,237;green,242;blue,247},
+    draw={rgb,255:red,44;green,62;blue,80},
+    line width=0.4pt, font=\scriptsize
+  },
+  pPurp/.style={
+    rectangle, rounded corners=2pt,
+    minimum width=4.4cm, minimum height=0.78cm,
+    align=center, text width=4.2cm, inner sep=4pt,
+    fill={rgb,255:red,237;green,233;blue,254},
+    draw={rgb,255:red,83;green,74;blue,183},
+    line width=0.4pt, font=\scriptsize
+  },
+  pRose/.style={
+    rectangle, rounded corners=2pt,
+    minimum width=2.0cm, minimum height=0.90cm,
+    align=center, text width=1.85cm, inner sep=3pt,
+    fill={rgb,255:red,255;green,245;blue,245},
+    draw={rgb,255:red,116;green,42;blue,42},
+    line width=0.4pt, font=\scriptsize
+  },
+  pBlue/.style={
+    rectangle, rounded corners=2pt,
+    minimum width=2.0cm, minimum height=0.90cm,
+    align=center, text width=1.85cm, inner sep=3pt,
+    fill={rgb,255:red,235;green,244;blue,255},
+    draw={rgb,255:red,43;green,108;blue,176},
+    line width=0.4pt, font=\scriptsize
+  },
+  pCoral/.style={
+    rectangle, rounded corners=2pt,
+    minimum width=4.4cm, minimum height=0.78cm,
+    align=center, text width=4.2cm, inner sep=4pt,
+    fill={rgb,255:red,255;green,245;blue,245},
+    draw={rgb,255:red,153;green,61;blue,30},
+    line width=0.4pt, font=\scriptsize
+  },
+  pFinal/.style={
+    rectangle, rounded corners=2pt,
+    minimum width=4.4cm, minimum height=0.78cm,
+    align=center, text width=4.2cm, inner sep=4pt,
+    fill={rgb,255:red,44;green,62;blue,80},
+    draw={rgb,255:red,44;green,62;blue,80},
+    text=white, line width=0.4pt, font=\scriptsize\bfseries
+  },
+  parr/.style={
+    -{Stealth[length=3pt,width=2.5pt]},
+    line width=0.45pt,
+    color={rgb,255:red,74;green,85;blue,104}
+  },
+  darr/.style={
+    -{Stealth[length=3pt,width=2.5pt]},
+    line width=0.40pt, dashed,
+    color={rgb,255:red,74;green,85;blue,104}
+  },
+]
+
+\node[pGray] (past) {{\bfseries Past trajectory}\\[1pt] $x_{1:t}$};
+\node[pGray, right=0.3cm of past] (future) {{\bfseries Future trajectory}\\[1pt] $y_{t+1:T}$};
+\node[pGray, right=0.3cm of future] (nbr) {{\bfseries Neighbours}\\[1pt] $x^{n}_{1:t}$};
+\node[font=\tiny\itshape, text={rgb,255:red,74;green,85;blue,104},
+      anchor=south] at ([yshift=0.08cm]future.north) {train only};
+
+\node[pTeal, below=0.65cm of future] (enc) {{\bfseries Social encoder}};
+\node[pTeal, below=0.4cm of enc] (emb) {Social embedding $h$};
+
+\node[pRose, below=0.65cm of emb, xshift=-1.25cm] (post) {$q_\phi(z \mid x, y, h)$\\[2pt]{\tiny posterior}};
+\node[pBlue, below=0.65cm of emb, xshift=+1.25cm] (prior) {$p_\theta(z \mid x, h)$\\[2pt]{\tiny prior}};
+\node[font=\tiny\bfseries, text={rgb,255:red,116;green,42;blue,42},
+      anchor=south] at ([yshift=0.1cm]post.north) {TRAINING};
+\node[font=\tiny\bfseries, text={rgb,255:red,43;green,108;blue,176},
+      anchor=south] at ([yshift=0.1cm]prior.north) {INFERENCE};
+
+\node[pPurp, below=0.65cm of emb, yshift=-1.95cm] (z) {$z \sim \mathcal{N}(\mu,\,\sigma^2\mathbf{I})$};
+\node[pCoral, below=0.4cm of z] (dec) {{\bfseries LSTM decoder}};
+\node[pFinal, below=0.4cm of dec] (out) {Generated future $\hat{y}_{t+1:T}$};
+
+\draw[parr] (past.south) -- ++(0,-0.2) -| (enc.north west);
+\draw[darr] (future.south) -- (future.south |- enc.north);
+\draw[parr] (nbr.south) -- ++(0,-0.2) -| (enc.north east);
+\draw[parr] (enc.south) -- (emb.north);
+\draw[parr] (emb.south) -- ++(0,-0.18) -| (post.north);
+\draw[parr] (emb.south) -- ++(0,-0.18) -| (prior.north);
+\draw[darr] (post.south) -- ++(0,-0.18) -| (z.north west);
+\draw[parr] (prior.south) -- ++(0,-0.18) -| (z.north east);
+\draw[parr] (z.south) -- (dec.north);
+\draw[parr] (dec.south) -- (out.north);
+
+\end{tikzpicture}

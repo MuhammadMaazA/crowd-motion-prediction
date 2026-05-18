@@ -1,0 +1,82 @@
+\begin{tikzpicture}[
+  node distance=0.4cm,
+  pGray/.style={
+    rectangle, rounded corners=2pt,
+    minimum width=3.8cm, minimum height=0.65cm,
+    align=center, text width=3.6cm, inner sep=3pt,
+    fill={rgb,255:red,247;green,250;blue,252},
+    draw={rgb,255:red,74;green,85;blue,104},
+    line width=0.4pt, font=\scriptsize
+  },
+  pTeal/.style={
+    rectangle, rounded corners=2pt,
+    minimum width=2.6cm, minimum height=0.75cm,
+    align=center, text width=2.4cm, inner sep=3pt,
+    fill={rgb,255:red,237;green,242;blue,247},
+    draw={rgb,255:red,44;green,62;blue,80},
+    line width=0.4pt, font=\scriptsize
+  },
+  pPurp/.style={
+    rectangle, rounded corners=2pt,
+    minimum width=2.6cm, minimum height=0.75cm,
+    align=center, text width=2.4cm, inner sep=3pt,
+    fill={rgb,255:red,237;green,233;blue,254},
+    draw={rgb,255:red,83;green,74;blue,183},
+    line width=0.4pt, font=\scriptsize
+  },
+  pCoral/.style={
+    rectangle, rounded corners=2pt,
+    minimum width=3.8cm, minimum height=0.75cm,
+    align=center, text width=3.6cm, inner sep=3pt,
+    fill={rgb,255:red,255;green,245;blue,245},
+    draw={rgb,255:red,153;green,61;blue,30},
+    line width=0.4pt, font=\scriptsize
+  },
+  pFinal/.style={
+    rectangle, rounded corners=2pt,
+    minimum width=3.8cm, minimum height=0.75cm,
+    align=center, text width=3.6cm, inner sep=3pt,
+    fill={rgb,255:red,237;green,242;blue,247},
+    draw={rgb,255:red,44;green,62;blue,80},
+    line width=0.4pt, font=\scriptsize\bfseries
+  },
+  parr/.style={
+    -{Stealth[length=3pt,width=2.5pt]},
+    line width=0.45pt,
+    color={rgb,255:red,74;green,85;blue,104}
+  },
+]
+
+\node[pGray] (x) {{\bfseries Observed trajectory} $X$};
+\node[pTeal, below=0.9cm of x, xshift=-2.3cm] (cv) {%
+  {\bfseries CV baseline}\\[-2pt]
+  {\tiny $\hat{Y}_\text{CV} = \text{pos} + v{\cdot}t$}};
+\node[pPurp, below=0.9cm of x, xshift=+2.3cm] (gru) {%
+  {\bfseries Target GRU encoder}\\[-2pt]
+  {\tiny $h_\text{target}$ from $x_\text{rel}$}};
+\node[pGray, below=0.4cm of gru] (neigh) {{\bfseries Nearby pedestrians} $S$};
+\node[pPurp, below=0.4cm of neigh] (nenc) {%
+  {\bfseries Neighbour GRU + pooling}\\[-2pt]
+  {\tiny $h_\text{social}$ via mean pool}};
+\node[pCoral, below=0.9cm of x, yshift=-3.8cm] (fusion) {%
+  {\bfseries Target + social fusion MLP}\\[-2pt]
+  {\tiny $[h_\text{target};\,h_\text{social}] \to h$}};
+\node[pCoral, below=0.4cm of fusion] (res) {%
+  {\bfseries Residual decoder $R_\theta$}\\[-2pt]
+  {\tiny MLP $\to$ pred\_len $\times\,2$}};
+\node[pFinal, below=0.4cm of res] (final) {%
+  {\bfseries Final prediction} $\;\hat{Y} = \hat{Y}_\text{CV} + R_\theta$};
+
+\draw[parr] (x.south) -- ++(0,-0.25) coordinate (xfork) -- (xfork -| cv.north) -- (cv.north);
+\draw[parr] (xfork) -- (xfork -| gru.north) -- (gru.north);
+\draw[parr] (gru.south) -- (neigh.north);
+\draw[parr] (neigh.south) -- (nenc.north);
+\draw[parr] (cv.south) -- ++(0,-0.25) coordinate (cvdrop)
+            -- (cvdrop |- fusion.west) -- (fusion.west)
+            node[midway, above, font=\tiny] {$\hat{Y}_\text{CV}$};
+\draw[parr] (nenc.south) -- ++(0,-0.25) coordinate (nencdrop)
+            -- (nencdrop |- fusion.east) -- (fusion.east);
+\draw[parr] (fusion.south) -- (res.north);
+\draw[parr] (res.south) -- (final.north);
+
+\end{tikzpicture}

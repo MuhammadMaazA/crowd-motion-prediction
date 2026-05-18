@@ -1,0 +1,1106 @@
+\documentclass[conference]{IEEEtran}
+\usepackage{cite}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{graphicx}
+\usepackage{textcomp}
+\usepackage{xcolor}
+\usepackage{url}
+\usepackage{tikz}
+\usepackage{float}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{array}
+\usepackage[hidelinks]{hyperref}
+\usetikzlibrary{shapes.geometric,shapes.misc,arrows.meta,positioning,fit}
+
+\begin{document}
+
+\title{Pedestrian Trajectory Prediction and World Modelling for Safe Robot Navigation in Human Crowds}
+
+\author{
+\IEEEauthorblockN{Vaibhav Mehra \quad Muhammad Maaz \quad Benjamin Li}
+\IEEEauthorblockA{
+Department of Computer Science\\
+University College London\\
+London, United Kingdom\\
+\{vaibhav.mehra.23, muhammad.maaz.23, benjamin.li.23\}@ucl.ac.uk}
+}
+\maketitle
+
+\begin{abstract}
+Safe robot navigation in human crowds depends on predicting uncertain
+pedestrian motion before planning or runtime safety filtering can make
+reliable decisions. Building on our earlier survey, which identified a gap
+between open-loop prediction quality and closed-loop navigation safety, this
+report presents a prediction-centered stack with three connected parts:
+synthetic trajectory augmentation, a residual crowd world model, and a
+benchmark of trajectory predictors. The implementation includes a Social-CVAE generator
+pretrained on SDD and fine-tuned on ETH/UCY, a lightweight world model that
+predicts pedestrian futures as a learned residual over constant velocity, and
+five predictors: Social-LSTM, SLSTM+V, Social-GRU, a Trajectory Transformer,
+and a diffusion predictor, evaluated against constant velocity and
+Trajectron++. On held-out eth, the Simple Residual Model improves ADE from
+1.0755 m to 0.9514 m and FDE from 2.2819 m to 1.9171 m. On ETH/UCY, the
+Transformer gives the lowest ADE, 0.568 m, and NLL, 1.54, while Trajectron++
+gives the lowest minADE@20, 0.385 m. SDD pretraining improves recurrent models
+by 5 to 10 percent. Filtered synthetic data supports augmentation but requires
+quality control.
+\end{abstract}
+
+\begin{IEEEkeywords}
+trajectory prediction, world models, pedestrian motion, synthetic data,
+transformers, diffusion models, crowd navigation
+\end{IEEEkeywords}
+
+\section{Introduction}
+
+Mobile robots operating in corridors, hospitals, stations, campuses, or
+shopping spaces must move through people who are not passive obstacles. People
+slow down, turn, give way, ignore the robot, or react late. The navigation
+problem is therefore more than geometric collision avoidance; it requires
+forecasting uncertain human motion quickly enough for a downstream planner and
+safety layer to use it.
+
+The earlier literature review surveyed crowd navigation methods and found a recurring
+systems problem: better module-level prediction does not automatically imply
+safer closed-loop navigation. Point forecasts can look accurate under ADE/FDE
+while missing rare but safety-critical futures; diverse forecasts can cover
+more futures but produce uncertainty sets so large that planning becomes
+conservative; and more complex models can miss real-time control budgets. Those
+findings motivated the work in this report. Instead of repeating the survey, we
+focus on the design, implementation, and evaluation of the prediction and world
+modelling components built so far.
+
+The project is framed as a prediction-centered crowd navigation stack.
+Vaibhav developed a Social-CVAE synthetic trajectory generator and a residual
+crowd world model. The generator increases training diversity, while the world
+model gives a lightweight planning-facing forecast by correcting a
+constant-velocity physical prior. Muhammad implemented and evaluated the
+trajectory prediction suite, including recurrent, Transformer, diffusion, and
+Trajectron++ baselines, plus SDD pretraining and ETH/UCY fine-tuning.
+Benjamin's work connects the prediction stack to downstream navigation safety
+through a conformal/PPO safety-planning interface; since final safety results
+are not available in this repository, that component is treated as integration
+context and future closed-loop validation, not as evaluated output.
+
+The report makes three contributions. First, it evaluates whether synthetic
+trajectories can augment scarce ETH/UCY data without replacing real pedestrian
+motion. Second, it tests a residual crowd world model as a simple model of
+pedestrian dynamics for planning. Third, it compares multiple trajectory
+predictors under a shared protocol on ETH/UCY and SDD, then studies whether
+SDD pretraining and synthetic fine-tuning improve generalisation.
+
+\subsection{Design Rationale From The Initial Survey}
+
+The initial literature survey shaped the implementation in three concrete ways.
+The first was the need to treat pedestrian motion as multi-modal. A person walking toward an
+intersection may continue straight, slow down, turn, or avoid another person.
+Single-trajectory predictors can score well when the most common future occurs,
+but they do not tell a planner whether an alternative future is still plausible.
+For this reason, the benchmark compares point-prediction models with
+Trajectron++ and a diffusion predictor, and reports both ADE/FDE and
+best-of-20 metrics.
+
+The second design lesson was that prediction uncertainty must be usable by the
+downstream system. A model that produces accurate means but poorly calibrated
+uncertainty can make a conformal safety layer either overconfident or
+unnecessarily conservative. The report therefore includes NLL where available
+and discusses how residual errors would feed conformal regions. The objective
+is to provide uncertainty that can be converted into planning constraints, not
+only to forecast pedestrians for a benchmark.
+
+The third lesson was the real-time constraint. In a crowd navigation stack,
+predictions must be recomputed as the robot replans. A heavy model that improves
+open-loop prediction but lowers the achieved control frequency can harm the
+closed-loop system. The benchmark therefore includes lightweight baselines such as
+constant velocity and the residual world model alongside larger neural
+predictors. The comparison is therefore not simply between old and new models,
+but between different assumptions about speed, diversity, calibration, and
+planning suitability.
+
+\section{Project Management}
+
+The initial project plan split the work into four deliverables. D1 was a
+multi-modal prediction module, D2 an interaction-aware planning component, D3 a
+confidence-calibrated safety layer, and D4 an end-to-end evaluation suite. By
+the time of this report, the most complete evidence is in D1 and its
+supporting components: synthetic augmentation, residual world modelling, and
+predictor evaluation. The planning and safety layer remains the downstream
+interface into which these predictions will be integrated.
+
+\begin{table}[t]
+\caption{Planned milestones and submission status.}
+\label{tab:timeline}
+\centering
+\scriptsize
+\setlength{\tabcolsep}{3pt}
+\renewcommand{\arraystretch}{1.12}
+\begin{tabularx}{\columnwidth}{@{}p{0.9cm}X p{1.45cm}@{}}
+\toprule
+\textbf{Weeks} & \textbf{Milestone} & \textbf{Status} \\
+\midrule
+1--3 & Environment setup, baseline datasets, initial Social-LSTM and constant-velocity tests. & Complete \\
+4--6 & Prediction models, including Trajectron++ comparison and model-specific metrics. & Complete \\
+7--8 & Synthetic data generation and residual crowd world model experiments. & Complete \\
+9--10 & Safety/planning interface and conformal/PPO integration design. & Complete \\
+11 & Final comparisons, plots, ablations, and report integration. & Complete \\
+12 & Final report, presentation material, and submission cleanup. & Complete \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+The role split also evolved as the implementation matured. Vaibhav focused on
+the Social-CVAE generator and residual world model, including the generation
+pipeline, filtering criteria, and held-out eth residual-model evaluation.
+Muhammad implemented the trajectory prediction benchmark and transfer-learning
+experiments, including Social-LSTM, SLSTM+V, Social-GRU, the Trajectory
+Transformer, diffusion predictor, SDD training, and ETH/UCY fine-tuning.
+Benjamin's role is the safety/planning bridge, where predictor outputs feed
+conformal uncertainty handling and PPO-based navigation. His contribution
+defines how the forecasts produced by the prediction stack become action-level
+safety constraints: sampled or Gaussian pedestrian futures are converted into
+uncertainty regions, the nominal policy proposes a robot action, and the
+safety interface can veto or reshape unsafe actions before execution. This
+keeps the report aligned with the original safe-navigation goal even though the
+numerical results available in this repository are most complete for prediction and
+world modelling.
+
+The main risks were dependency setup, limited compute, integration mismatch,
+and modest performance gains. Setup risk was mitigated by keeping models and
+data loaders modular. Compute risk was handled by using leave-one-scene-out
+training, early stopping, and smaller predictor variants before running larger
+models. Integration risk remains open: the prediction components are ready, but
+full closed-loop testing still requires connecting them to Benjamin's safety
+and planning stack. Finally, because high-capacity models do not always
+outperform simpler baselines, the report includes negative and mixed findings
+as well as the best-performing results.
+
+\subsection{Deliverable Status}
+
+D1 is complete for this submission. It includes constant velocity,
+Social-LSTM, SLSTM+V, Social-GRU, Transformer, diffusion, and Trajectron++
+comparisons on ETH/UCY, plus SDD training and a fine-tuning study. D1 also
+benefits from Vaibhav's synthetic data pipeline because the fine-tuning stage
+uses filtered synthetic trajectories as an augmentation source.
+
+D2 is complete at the modelling/interface level for this report: the residual
+crowd world model produces planning-facing forecasts, and Benjamin's
+safety-planning interface specifies how those forecasts are consumed by a
+nominal policy. D3 is complete as an implementation design and interface:
+prediction residuals and sampled futures are the inputs to conformal uncertainty
+handling, while PPO-based navigation provides the nominal action stream. D4 is
+complete for the current scope as an evaluation suite for prediction, synthetic
+augmentation, transfer, and world modelling. Full closed-loop collision-rate,
+time-to-goal, and conservatism measurements are the next evaluation layer after
+the components are connected in simulation.
+
+\section{Methodology and System Design}
+
+\subsection{System Overview}
+
+Fig.~\ref{fig:system_overview} shows the stack used in this report. The first
+stage expands the data distribution through synthetic trajectory generation.
+The second stage learns a residual crowd world model for planning-facing
+pedestrian motion forecasts. The third stage benchmarks several trajectory
+predictors, some optimized for point accuracy and others for stochastic
+coverage. These outputs are intended to feed a downstream conformal safety
+layer, where calibrated prediction errors determine how much space must be
+reserved around future human positions~\cite{angelopoulos2021gentle}.
+
+\begin{figure}[t]
+  \centering
+  \resizebox{0.70\columnwidth}{!}{\input{figures/pipeline}}
+  \caption{Synthetic data and world-model pipeline used to support downstream
+  predictor training and eventual safety-aware navigation.}
+  \label{fig:system_overview}
+\end{figure}
+
+\subsection{Synthetic Data Generation}
+
+ETH/UCY is the target benchmark, but it contains only five scenes and a limited
+range of crowd configurations. To increase data scale and motion diversity, we
+developed a Social-CVAE generator. Synthetic data is used as augmentation, not
+as a replacement for real trajectories.
+
+The generator follows the standard 8-step observation and 12-step prediction
+format. It is pretrained on SDD~\cite{robicquet2016learning}, which provides a
+larger and broader aerial pedestrian dataset, then fine-tuned on ETH/UCY so the
+generated samples better match the target benchmark distribution. The CVAE
+structure is appropriate because the same observed path can plausibly lead to
+several futures: continuing straight, slowing down, turning, or reacting to
+nearby pedestrians. The latent variable models this ambiguity.
+
+The preprocessing stage converts both SDD and ETH/UCY into fixed-length
+trajectory windows and normalises them into a shared coordinate convention. Each
+training sample contains the target pedestrian history, its future trajectory,
+and nearby pedestrian histories when available. During training, the encoder can
+condition on the observed future through the approximate posterior
+$q_\phi(z\mid x,y,h)$; during generation, only the observed past and social
+context are available, so samples are drawn from the conditional prior
+$p_\theta(z\mid x,h)$. This distinction matters because it prevents the
+generator from depending on information that would not exist at deployment.
+
+\begin{figure}[t]
+  \centering
+  \resizebox{0.82\columnwidth}{!}{\input{figures/social_cvae}}
+  \caption{Social-CVAE generator. The posterior uses future trajectories during
+  training; at generation time, the conditional prior samples futures from the
+  observed trajectory and social context.}
+  \label{fig:cvae}
+\end{figure}
+
+The training objective was
+\begin{equation}
+\begin{split}
+\mathcal{L} =
+&\mathcal{L}_{\text{recon}}
++ \lambda_v \mathcal{L}_{\text{vel}} \\
+&+ \beta D_{\text{KL}}(q_\phi(z)\,\|\,p_\theta(z))
++ \lambda_s \mathcal{L}_{\text{smooth}} .
+\end{split}
+\end{equation}
+This combines position reconstruction, velocity consistency, latent
+regularisation, and trajectory smoothness. For each seed trajectory, we
+generated 20 candidate futures. Angle-based filtering removes
+unrealistic samples such as overly straight, overly smooth, or unstable
+trajectories. This step is important because poor synthetic samples can widen
+the training distribution away from realistic pedestrian motion.
+
+The filtering stage is part of the model design. Synthetic data should increase
+support around plausible pedestrian behaviours without making unrealistic
+curves appear likely to the downstream predictor. Vaibhav's pipeline keeps
+synthetic trajectories as a train-only augmentation source: the validation and
+test sets remain real ETH/UCY scenes, so performance cannot be inflated by
+testing on generated data.
+
+\subsection{Residual Crowd World Model}
+
+The residual crowd world model is a separate contribution from the predictor
+benchmark. Its purpose is to provide a lightweight planning-facing dynamics
+model for nearby pedestrian motion. It predicts 12 future timesteps from 8
+observed timesteps, matching the ETH/UCY setup, but it does not learn the full
+trajectory from scratch. Instead, it corrects a physical baseline:
+\begin{equation}
+\hat{Y}=Y_{\text{CV}}+R_\theta(X,S),
+\label{eq:residual_model}
+\end{equation}
+where $Y_{\text{CV}}$ is the constant-velocity forecast, $R_\theta$ is the
+learned residual, $X$ is the observed target trajectory, and $S$ is optional
+nearby pedestrian context.
+
+This design choice is conservative. Pedestrians often move
+smoothly over a few seconds, so constant velocity is a strong prior. The neural
+network only needs to learn deviations: turning, slowing down, acceleration,
+or local interaction effects. Trajectories are shifted into a local frame using
+the last observed position as origin. A GRU encodes the target trajectory;
+neighbours are encoded and mean-pooled with a validity mask; and the fused
+representation is decoded into a residual correction.
+
+Three variants separate the benefit of residual learning from
+the benefit of extra context or capacity. The Simple Residual Model uses only
+the target pedestrian history and tests whether a learned correction to constant
+velocity is sufficient. The Social Residual Model adds nearby pedestrian
+context, testing whether interaction cues improve prediction. The Latent Crowd
+World Model adds a higher-capacity latent dynamics representation, testing
+whether a more expressive world model improves generalisation or overfits the
+small ETH/UCY training split.
+
+\begin{figure}[t]
+  \centering
+  \resizebox{0.82\columnwidth}{!}{\input{figures/world_model}}
+  \caption{Residual crowd world model. The final pedestrian forecast combines a
+  constant-velocity prior with a learned residual correction from target and
+  social context.}
+  \label{fig:world_model}
+\end{figure}
+
+The model was trained with
+\begin{equation}
+\mathcal{L}
+=
+\mathcal{L}_{\text{ADE}}
++ \lambda_f \mathcal{L}_{\text{FDE}}
++ \lambda_r \mathcal{L}_{\text{res}} .
+\end{equation}
+ADE encourages full-horizon accuracy, FDE emphasizes the final position, and
+residual regularisation discourages unrealistic corrections.
+
+This world model is separate from the larger predictor
+benchmark. The benchmark asks which forecasting architecture performs best under
+standard open-loop metrics. The world model asks a planning-facing question:
+can a lightweight, interpretable dynamics model improve over a hand-designed
+physical prior while remaining simple enough to use inside a future control
+loop?
+
+\subsection{Trajectory Prediction Models}
+\label{sec:tpm}
+
+The predictor benchmark evaluates models that output future pedestrian
+trajectories for downstream planning and safety filtering. Each predictor
+observes 8 steps at 2.5 Hz (3.2 s) and predicts 12 future steps (4.8 s).
+Coordinates are represented relative to the last observed position, which
+reduces dependence on absolute scene location~\cite{alahi2016social}. Social
+context comes from up to five neighbours inside a 2.0 m radius, with validity
+masks used when fewer neighbours are present. Except for the constant-velocity
+and Trajectron++ baselines, models output a bivariate Gaussian
+$(\mu_x,\mu_y,\sigma_x,\sigma_y,\rho)$ per future step and are trained with
+negative log-likelihood plus ADE/FDE monitoring. This common interface makes the
+comparison fair: each model sees the same history and social context, but uses a
+different inductive bias.
+
+Social-LSTM~\cite{alahi2016social} is the recurrent baseline. It uses an
+LSTM encoder-decoder with hidden size 128, embedding size 64, and social pooling
+over nearby pedestrian hidden states. SLSTM+V keeps the same architecture but
+appends instantaneous velocity
+\begin{equation}
+v_t=p_t-p_{t-1}
+\end{equation}
+to the focal pedestrian input, changing $(x_t,y_t)$ into
+$(x_t,y_t,v_x,v_y)$ while leaving neighbour inputs as positions. This tests a
+small but important design question: whether giving the model explicit
+short-term motion state improves forecasting more reliably than asking the LSTM
+to infer velocity from positions alone. Social-GRU replaces the LSTM with a
+bidirectional GRU~\cite{cho2014learning,schuster1997bidirectional}. Forward and
+backward states are concatenated and projected into the shared hidden
+representation, allowing late observation cues, such as a pedestrian beginning
+to decelerate near the end of the history, to influence the encoded trajectory.
+
+The Trajectory Transformer uses a Pre-LN encoder-decoder
+architecture~\cite{vaswani2017attention,xiong2020layer}. Eight focal tokens and
+up to forty neighbour tokens form the encoder memory; twelve learned decoder
+queries cross-attend to that memory and output bivariate Gaussian parameters
+for each future step. This structure gives each predicted timestep direct
+access to the complete observed social scene.
+
+\begin{figure}[t]
+  \centering
+  \resizebox{0.62\columnwidth}{!}{\input{figures/transformer}}
+  \caption{Trajectory Transformer architecture used in the prediction benchmark.}
+  \label{fig:transformer}
+\end{figure}
+
+The diffusion predictor uses a shared Transformer encoder, a Gaussian MLP head,
+and a denoiser trained with a DDPM loss~\cite{ho2020denoising}. A CLS summary
+feeds the Gaussian head, while the denoiser cross-attends to the encoded
+trajectory memory and predicts the noise term for a candidate future. The implementation uses
+100 diffusion steps, linear $\beta \in [10^{-4},0.02]$, DDIM-50 sampling at
+inference~\cite{song2021denoising}, and $K=20$ samples for diversity metrics.
+An early implementation detached the Gaussian head from the shared encoder; the
+final version removes this detach so that the likelihood and denoising losses
+jointly shape the representation.
+Trajectron++~\cite{salzmann2020trajectron} is included as the main probabilistic
+multi-modal baseline because its graph-structured CVAE directly models
+multi-agent trajectory distributions.
+
+\begin{table}[t]
+\caption{Main predictor design choices.}
+\label{tab:model_design}
+\centering
+\scriptsize
+\setlength{\tabcolsep}{3pt}
+\renewcommand{\arraystretch}{1.12}
+\begin{tabularx}{\columnwidth}{@{}p{1.65cm}X p{1.55cm}@{}}
+\toprule
+\textbf{Model} & \textbf{Role in the comparison} & \textbf{Output} \\
+\midrule
+CV & Non-learned physical baseline and residual-model prior. & Mean plus noise \\
+Social-LSTM & Recurrent social-pooling baseline from prior work. & Gaussian \\
+SLSTM+V & Tests whether explicit velocity improves Social-LSTM. & Gaussian \\
+Social-GRU & Tests bidirectional recurrent encoding under same social radius. & Gaussian \\
+Transformer & Tests full-window attention over focal and neighbour tokens. & Gaussian \\
+Diffusion & Tests stochastic sampling with a denoising trajectory model. & Samples plus Gaussian head \\
+Trajectron++ & Probabilistic graph-CVAE baseline for multi-modal coverage. & Samples/GMM \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\subsection{Transfer Learning}
+\label{sec:transfer}
+
+ETH/UCY is small, so the project uses a two-stage transfer protocol. Stage one pretrains
+each architecture on SDD for up to 100 epochs with Adam at learning rate
+$10^{-3}$. Stage two fine-tunes each checkpoint on the four ETH/UCY training
+scenes plus filtered synthetic trajectories for up to 50 epochs at learning
+rate $10^{-4}$, with early stopping and gradient clipping. The goal is to use
+SDD for broad motion statistics, ETH/UCY for target-domain realism, and
+synthetic trajectories for additional crowd configurations. This protocol also
+tests whether Vaibhav's generated trajectories improve Muhammad's predictor
+training, instead of evaluating the generator only as a standalone component.
+
+\begin{figure}[t]
+  \centering
+  \resizebox{0.62\columnwidth}{!}{\input{figures/finetune_pipeline}}
+  \caption{Two-stage transfer: SDD pretraining followed by ETH/UCY and synthetic
+  fine-tuning.}
+  \label{fig:finetune}
+\end{figure}
+
+\subsection{Downstream Safety Interface}
+
+The prediction stack is designed to feed a safety-aware navigation layer rather
+than operate as an isolated benchmark. In the intended integration, predictor
+residuals on a calibration split define conformal radii or regions, which can
+then be used by a planner or shield to reject unsafe actions. This follows the
+initial survey conclusion that prediction uncertainty must be preserved across module
+boundaries. Since the repository does not contain final closed-loop safety
+results, this report evaluates the prediction and world-model components and
+leaves full navigation validation as future work.
+
+Benjamin's component sits at this boundary. The nominal PPO/diffusion-policy
+planner is responsible for proposing robot actions, while the safety interface
+uses predicted pedestrian occupancies and calibrated residuals to decide whether
+the action is acceptable. The interface is modular: it can consume
+the Transformer's Gaussian mean and residual calibration, Trajectron++ samples,
+or the diffusion predictor's sampled futures. This lets the group test how
+prediction format affects downstream safety once full closed-loop experiments
+are run.
+
+\begin{figure}[t]
+\centering
+\resizebox{0.95\columnwidth}{!}{%
+\begin{tikzpicture}[
+  font=\scriptsize,
+  box/.style={draw, rounded corners=2pt, align=center,
+              minimum height=7mm, minimum width=20mm, inner sep=2pt},
+  wide/.style={box, minimum width=31mm},
+  arr/.style={-{Stealth[length=3pt,width=2.5pt]}, line width=0.45pt}
+]
+\node[wide] (pred) {Trajectory\\predictor};
+\node[wide, right=4mm of pred] (cal) {Conformal\\calibration};
+\node[wide, right=4mm of cal] (shield) {Safety\\interface};
+\node[wide, below=7mm of shield] (ppo) {PPO / diffusion\\policy};
+\node[wide, left=4mm of ppo] (robot) {Robot\\action};
+\draw[arr] (pred) -- node[above, font=\tiny] {future humans} (cal);
+\draw[arr] (cal) -- node[above, font=\tiny] {regions} (shield);
+\draw[arr] (ppo) -- node[below, font=\tiny] {nominal action} (shield);
+\draw[arr] (shield) -- node[below, font=\tiny] {verified action} (robot);
+\draw[arr] (robot.west) -- ++(-4mm,0) |- node[pos=0.25, left, font=\tiny] {replan} (pred.south);
+\end{tikzpicture}
+}
+\caption{Benjamin's downstream safety-planning interface. The report evaluates
+the prediction inputs to this interface; closed-loop navigation metrics remain
+the next validation step.}
+\label{fig:safety_interface}
+\end{figure}
+
+\section{Experimental Setup}
+
+\subsection{Synthetic Generation Setup}
+
+The Social-CVAE was pretrained on SDD and fine-tuned on ETH/UCY using 8
+observed and 12 future timesteps. For each ETH/UCY seed trajectory, 20 futures
+were generated with latent sampling temperature 0.7. The quality-control test
+compared unfiltered generation with angle-based filtering. In the filtered
+setting, the model generated extra candidates with a multiplier of 5 and kept
+samples closest to the ETH/UCY turning-angle target of about $46^\circ$, within
+a $20^\circ$ to $90^\circ$ range.
+
+Evaluation used both prediction and realism metrics. ADE, FDE, minADE@20, and
+minFDE@20 were computed in the normalised evaluation space. Speed,
+acceleration, and turning-angle statistics compared real and generated
+trajectories.
+
+\subsection{World Model Setup}
+
+The residual crowd world model was evaluated on a leave-one-scene-out ETH/UCY
+setup with eth held out. Training used the remaining ETH/UCY scenes and filtered
+synthetic trajectories. The comparison includes constant velocity, a Simple Residual Model
+using only the target trajectory, a Social Residual Model using neighbouring
+pedestrian context, and a Latent Crowd World Model with higher capacity. ADE
+and FDE were reported in metres.
+
+\subsection{Predictor Benchmark Setup}
+
+The main predictor benchmark uses ETH~\cite{pellegrini2009you} scenes eth and
+hotel, UCY~\cite{lerner2007crowds} scenes univ, zara1, and zara2, and SDD
+scenes from the Stanford Drone Dataset~\cite{robicquet2016learning}. ETH/UCY is
+sampled at 2.5 Hz with 8 observed and 12 predicted steps. SDD is downsampled
+from 30 fps to 2.5 Hz using stride 12 and converted from pixels to metres at
+0.0417 m/px.
+
+\begin{table}[t]
+\caption{Datasets and splits used in the report.}
+\label{tab:datasets}
+\centering
+\scriptsize
+\setlength{\tabcolsep}{3pt}
+\renewcommand{\arraystretch}{1.12}
+\begin{tabularx}{\columnwidth}{@{}p{1.35cm}X p{1.55cm}@{}}
+\toprule
+\textbf{Dataset} & \textbf{Use in this project} & \textbf{Split} \\
+\midrule
+ETH/UCY & Target pedestrian benchmark for all main predictor and residual-model results. & Leave-one-scene-out \\
+SDD & Large-scale pretraining source and broader motion distribution for transfer learning. & Leave-one-scene-out \\
+Synthetic & Social-CVAE generated trajectories filtered by turning behaviour and used for augmentation. & Train only \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+The evaluation uses leave-one-scene-out splits. Metrics are ADE and FDE, which measure
+mean and final Euclidean error; minADE@20 and minFDE@20, which evaluate the
+best of 20 samples; and NLL for probabilistic Gaussian outputs. All learned
+models use Adam with learning rate $10^{-3}$, weight decay $10^{-4}$, batch
+size 64, and ReduceLROnPlateau scheduling. Fine-tuning uses learning rate
+$10^{-4}$, patience 15, and gradient clipping at 1.0.
+
+The metrics answer different questions. ADE and FDE measure whether the most
+likely forecast is geometrically close to the true path. minADE@20 and
+minFDE@20 measure whether a model can sample at least one plausible future that
+matches the realised motion. NLL measures whether the model assigns probability
+mass appropriately, which matters for calibrated safety filtering. This
+multi-metric setup follows directly from the initial survey finding that no single
+forecasting score captures planning risk.
+
+\section{Results and Discussion}
+
+\subsection{Synthetic Data Generation Results}
+
+Table~\ref{tab:synthetic_generation_results} shows that the Social-CVAE can
+reconstruct and sample trajectories with very low normalised prediction error.
+The speed mean is close to the real ETH/UCY value, but acceleration variance is
+higher and generated turning angles are smoother than real trajectories.
+
+\begin{table}[H]
+\centering
+\caption{Synthetic trajectory generation results. Lower ADE/FDE values are better.}
+\label{tab:synthetic_generation_results}
+\resizebox{\columnwidth}{!}{
+\begin{tabular}{@{}lcc@{}}
+\toprule
+\textbf{Metric} & \textbf{Real} & \textbf{Synthetic / Model} \\
+\midrule
+ADE & --- & $4.61 \times 10^{-4}$ \\
+FDE & --- & $8.50 \times 10^{-4}$ \\
+minADE@20 & --- & $4.59 \times 10^{-4}$ \\
+minFDE@20 & --- & $7.72 \times 10^{-4}$ \\
+\midrule
+Speed Mean & $7.49 \times 10^{-4}$ & $8.02 \times 10^{-4}$ \\
+Speed Std. & $8.16 \times 10^{-4}$ & $1.13 \times 10^{-3}$ \\
+Acceleration Mean & $6.33 \times 10^{-4}$ & $4.77 \times 10^{-4}$ \\
+Acceleration Std. & $7.77 \times 10^{-4}$ & $1.74 \times 10^{-3}$ \\
+Turning Angle Mean & $46.4^\circ$ & $28.8^\circ$ \\
+Turning Angle Std. & $42.1^\circ$ & $40.3^\circ$ \\
+\bottomrule
+\end{tabular}
+}
+\end{table}
+
+The main limitation is turning behaviour. The synthetic turning-angle mean is
+$28.8^\circ$, compared with $46.4^\circ$ for real trajectories, which means the
+generator tends to produce smoother paths. Angle filtering improved the exported
+set's mean turning angle from $15.9^\circ$ to $21.4^\circ$ in Vaibhav's
+analysis, but it did not fully match the real distribution. The result supports
+a limited claim: filtered synthetic trajectories can expand training diversity,
+but real ETH/UCY trajectories must remain the anchor distribution.
+
+The speed and acceleration statistics explain why the augmentation is still
+valuable. The generated speed mean, $8.02\times10^{-4}$, is close to the real
+mean, $7.49\times10^{-4}$, so the generator preserves the overall motion scale.
+At the same time, the acceleration standard deviation is higher than the real
+value, which indicates that the sampled set contains additional local motion
+variation. This variation needs quality control: too little would duplicate
+ETH/UCY, while too much would corrupt the data distribution. The angle filter
+provides that control.
+
+\begin{figure}[t]
+  \centering
+  \IfFileExists{figures/seed_diversity_grid_0_3.png}{%
+    \includegraphics[width=\columnwidth]{figures/seed_diversity_grid_0_3.png}%
+  }{%
+    \fbox{\parbox[c][0.55\columnwidth][c]{0.88\columnwidth}{\centering
+    Placeholder for Vaibhav's generated-diversity plot}}%
+  }
+  \caption{Generated trajectory diversity from the same observed past. The
+  placeholder is replaced when Vaibhav's PNG is copied into the figures
+  directory.}
+  \label{fig:generated_diversity}
+\end{figure}
+
+\begin{figure}[t]
+  \centering
+  \IfFileExists{figures/distribution_comparison.png}{%
+    \includegraphics[width=\columnwidth]{figures/distribution_comparison.png}%
+  }{%
+    \fbox{\parbox[c][0.55\columnwidth][c]{0.88\columnwidth}{\centering
+    Placeholder for Vaibhav's real-vs-synthetic distribution plot}}%
+  }
+  \caption{Real and synthetic motion distributions for speed, acceleration,
+  turning angle, and nearest-neighbour distance.}
+  \label{fig:motion_distributions}
+\end{figure}
+
+\begin{figure}[t]
+  \centering
+  \IfFileExists{figures/filtering_comparison.png}{%
+    \includegraphics[width=\columnwidth]{figures/filtering_comparison.png}%
+  }{%
+    \fbox{\parbox[c][0.52\columnwidth][c]{0.88\columnwidth}{\centering
+    Placeholder for Vaibhav's angle-filtering plot}}%
+  }
+  \caption{Effect of angle-based filtering on synthetic trajectory statistics.}
+  \label{fig:filtering_comparison}
+\end{figure}
+
+\subsection{Residual Crowd World Model Results}
+
+The residual world model improves over constant velocity on held-out eth
+(Table~\ref{tab:residual_model_results}). The Simple Residual Model reduces ADE
+from 1.0755 m to 0.9514 m and FDE from 2.2819 m to 1.9171 m, giving relative
+improvements of 11.5 percent and 16.0 percent.
+
+\begin{table}[H]
+\centering
+\caption{Residual crowd world model results on held-out eth after fine-tuning
+with real ETH/UCY and filtered synthetic trajectories.}
+\label{tab:residual_model_results}
+\resizebox{\columnwidth}{!}{
+\begin{tabular}{@{}lcccc@{}}
+\toprule
+\textbf{Model} & \textbf{ADE (m)} & \textbf{FDE (m)} & \textbf{ADE Imp.} & \textbf{FDE Imp.} \\
+\midrule
+Constant Velocity & 1.0755 & 2.2819 & --- & --- \\
+Simple Residual Model & \textbf{0.9514} & \textbf{1.9171} & \textbf{11.5\%} & \textbf{16.0\%} \\
+Social Residual Model & 1.0069 & 2.0752 & 6.4\% & 9.1\% \\
+Latent Crowd World Model & Worse than CV & Worse than CV & --- & --- \\
+\bottomrule
+\end{tabular}
+}
+\end{table}
+
+The result supports the residual formulation in Eq.~\eqref{eq:residual_model}.
+Constant velocity captures much of the local pedestrian motion, and the learned
+residual corrects the cases where people slow, turn, or deviate. The Social
+Residual Model also improves over constant velocity, but it underperforms the
+simpler model. This suggests that neighbour context was not automatically
+beneficial in the held-out eth split; the additional capacity may have learned
+scene-specific patterns from the training and synthetic data. The Latent Crowd
+World Model performing worse than constant velocity reinforces the same point:
+larger models do not automatically generalise better.
+
+This negative result is important for system design. More social context does
+not guarantee better prediction; context quality and model capacity both
+matter. If neighbour identities are sparse, noisy, or only weakly informative,
+the social branch can add variance without adding predictive signal. For a
+downstream planner, the simple residual model has a clearer failure mode: it
+stays close to constant velocity unless the target history supports a
+correction. This behaviour is easier to combine with safety filtering than a
+larger model that may produce confident but poorly generalised deviations.
+
+The limitation is that the evaluation uses one held-out scene. The result
+should not be treated as a general claim of world-model superiority until the
+comparison is repeated across all five ETH/UCY splits and includes a real-only
+versus real-plus-synthetic ablation.
+
+The training curves in Fig.~\ref{fig:residual_training_curves} are included for
+this reason. Both residual variants reached their best validation behaviour
+early, after which training error could continue improving without reliably
+improving held-out performance. Early stopping is therefore part of the
+generalisation strategy for a small-scene
+pedestrian benchmark.
+
+\begin{figure}[t]
+  \centering
+  \begin{minipage}{0.9\columnwidth}
+    \centering
+    \IfFileExists{figures/simple_world_model_eth_curves.png}{%
+      \includegraphics[width=\linewidth]{figures/simple_world_model_eth_curves.png}%
+	    }{%
+	      \fbox{\parbox[c][0.34\columnwidth][c]{0.9\linewidth}{\centering
+	      Placeholder for Vaibhav's simple residual training curve}}%
+	    }
+    \vspace{-1mm}
+    \centerline{\scriptsize (a) Simple Residual Model}
+  \end{minipage}
+
+  \vspace{2mm}
+
+  \begin{minipage}{0.9\columnwidth}
+    \centering
+    \IfFileExists{figures/social_residual_world_model_eth_curves.png}{%
+      \includegraphics[width=\linewidth]{figures/social_residual_world_model_eth_curves.png}%
+	    }{%
+	      \fbox{\parbox[c][0.34\columnwidth][c]{0.9\linewidth}{\centering
+	      Placeholder for Vaibhav's social residual training curve}}%
+	    }
+    \vspace{-1mm}
+    \centerline{\scriptsize (b) Social Residual Model}
+  \end{minipage}
+
+  \caption{Training behaviour of residual world models on the held-out eth
+  split. The placeholders are replaced when Vaibhav's PNGs are copied into the
+  figures directory.}
+  \label{fig:residual_training_curves}
+\end{figure}
+
+\subsection{ETH/UCY Predictor Results}
+
+Table~\ref{tab:ethucy} compares all trajectory predictors on ETH/UCY. The
+Transformer gives the lowest ADE at 0.568 m and the lowest NLL at 1.54. The
+diffusion model gives the lowest FDE at 1.195 m. Trajectron++ gives the best
+minADE@20 at 0.385 m, showing that its CVAE latent variable covers diverse
+future modes better than the other models.
+
+\begin{table}[t]
+\caption{ETH/UCY leave-one-out results averaged over five scenes.
+mADE/mFDE denote minADE@20/minFDE@20. Best values are bold.}
+\label{tab:ethucy}
+\centering
+\footnotesize
+\setlength{\tabcolsep}{3.5pt}
+\begin{tabular}{@{}lrrrrr@{}}
+\toprule
+Model & ADE & FDE & mADE & mFDE & NLL \\
+\midrule
+CV Baseline & 0.736 & 1.272 & 0.610 & 0.814 & --- \\
+Social-LSTM~\cite{alahi2016social} & 0.596 & 1.248 & 0.581 & 0.597 & 18.0 \\
+SLSTM+V & 0.585 & 1.240 & 0.587 & 0.585 & 36.2 \\
+Social-GRU & 0.586 & 1.238 & 0.596 & 0.924 & --- \\
+Transformer & \textbf{0.568} & 1.203 & 0.638 & \textbf{0.532} & \textbf{1.54} \\
+Diffusion & 0.579 & \textbf{1.195} & 1.174 & 2.032 & 5.14 \\
+Trajectron++~\cite{salzmann2020trajectron} & 0.853 & 1.817 & \textbf{0.385} & 0.674 & 8.49 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[t]
+\caption{Per-scene ETH/UCY ADE. Best value per scene is bold.}
+\label{tab:per_scene_ade}
+\centering
+\scriptsize
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{@{}lrrrrrr@{}}
+\toprule
+Scene & CV & SLSTM & SLSTM+V & T++ & Trans. & Diff. \\
+\midrule
+eth & 1.204 & 1.015 & 1.010 & 1.355 & \textbf{0.982} & \textbf{0.982} \\
+hotel & 0.552 & 0.541 & 0.527 & 0.977 & \textbf{0.437} & 0.485 \\
+univ & 0.716 & 0.655 & 0.635 & 0.772 & 0.568 & \textbf{0.563} \\
+zara1 & 0.623 & 0.447 & \textbf{0.432} & 0.624 & 0.481 & 0.503 \\
+zara2 & 0.583 & \textbf{0.319} & 0.320 & 0.535 & 0.371 & 0.361 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+These results show why one metric is not enough. ADE rewards the most accurate
+central prediction, where the Transformer performs best. minADE@20 rewards
+having at least one sample close to the true future, where Trajectron++ is
+best. For safety-aware navigation, both matter: a small average error can
+shrink conformal radii, but missing plausible alternative futures can still
+create unsafe overconfidence.
+
+The NLL result is also important. The Transformer's NLL of 1.54 is much lower
+than Social-LSTM's 18.0 and Trajectron++'s 8.49 in our runs. This does not mean
+the Transformer is globally better for navigation, because it still has weaker
+best-of-20 diversity than Trajectron++. It does mean that, under the Gaussian
+head used here, the Transformer gives a sharper and better calibrated
+single-distribution forecast. A downstream conformal layer would still calibrate
+on residuals, but starting from a smaller and better shaped residual
+distribution can reduce conservatism.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=0.88\columnwidth]{figures/fig_nll.png}
+  \caption{Average NLL comparison on ETH/UCY for probabilistic predictors. Lower
+  values indicate better likelihood under the reported output distribution.}
+  \label{fig:nll}
+\end{figure}
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=0.88\columnwidth]{figures/fig03_qualitative.png}
+  \caption{Qualitative prediction on zara1. The examples show that per-scene
+  behaviour can differ from the aggregate ETH/UCY ranking.}
+  \label{fig:qualitative}
+\end{figure}
+
+Velocity augmentation gives a small but consistent gain over Social-LSTM:
+average ADE falls from 0.596 m to 0.585 m. Social-GRU nearly matches
+Social-LSTM, suggesting that the shared social-pooling radius may be more
+limiting than the recurrent cell choice. The diffusion predictor becomes
+competitive after sharing the encoder with the Gaussian head, but its
+best-of-20 diversity remains weak, so its samples cluster around the mean
+rather than covering alternative futures.
+
+Scene-level behaviour matters. The eth scene is hardest for almost every model,
+with ADE near or above 1 m, while zara2 is much easier because motion is more
+regular. This affects system deployment because calibration sets should
+match the target environment. A safety radius calibrated mostly on easy scenes
+would likely be too small for eth-like movement; a radius calibrated only on the
+hardest scene would be safe but more conservative elsewhere.
+
+The per-scene table also prevents overclaiming from the average alone. The
+Transformer has the best average ADE, but it is not best on every scene:
+SLSTM+V performs best on zara1, Social-LSTM narrowly wins on zara2, and diffusion
+matches or beats the Transformer on eth and univ. This variation matters for
+the final safety system because it suggests no predictor should be trusted
+without scene-aware calibration.
+
+\begin{table}[t]
+\caption{Diffusion ablation on ETH/UCY. Removing the encoder detach made the
+diffusion model usable as a predictor without improving diversity.}
+\label{tab:diffusion_ablation}
+\centering
+\footnotesize
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{@{}lrrrr@{}}
+\toprule
+Version & ADE & FDE & minADE@20 & NLL \\
+\midrule
+Detached encoder, $\lambda=1.0$ & 1.370 & 2.539 & 1.143 & 3.31 \\
+Shared encoder, $\lambda=0.3$ & \textbf{0.579} & \textbf{1.195} & 1.174 & 5.14 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The diffusion ablation is one of the clearest implementation lessons. The
+initial detached-encoder design separated the Gaussian head from the denoising
+training signal too strongly, producing poor point prediction. Sharing the
+encoder restored ADE and FDE, but minADE@20 stayed high. In other words, the
+fix made diffusion accurate around the dominant future, not genuinely
+multi-modal in the way Trajectron++ is.
+
+\subsection{SDD Results}
+
+Table~\ref{tab:sdd} reports SDD leave-one-out results. Every learned model
+improves over constant velocity by a wide margin. SLSTM+V gives the best ADE,
+minADE@20, and minFDE@20, while the Transformer gives the best FDE. The
+diffusion model again has poor diversity, with minADE@20 equal to 1.710 m.
+
+\begin{table}[t]
+\caption{SDD leave-one-out results averaged over eight scenes. Best values are bold.}
+\label{tab:sdd}
+\centering
+\footnotesize
+\setlength{\tabcolsep}{3.5pt}
+\begin{tabular}{@{}lrrrrr@{}}
+\toprule
+Model & ADE & FDE & mADE & mFDE & NLL \\
+\midrule
+CV Baseline & 0.926 & 1.620 & 0.797 & 1.154 & --- \\
+Social-LSTM & 0.672 & 1.358 & 0.783 & 0.621 & \textbf{1.162} \\
+SLSTM+V & \textbf{0.656} & 1.340 & \textbf{0.755} & \textbf{0.604} & 1.289 \\
+Social-GRU & 0.667 & 1.379 & 0.793 & 0.625 & 1.331 \\
+Transformer & 0.657 & \textbf{1.326} & 0.808 & 0.633 & 1.474 \\
+Diffusion & 0.673 & 1.335 & 1.710 & 3.159 & 1.683 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+SDD is larger and more varied than ETH/UCY, so the results also test whether
+the models remain stable at scale. The recurrent models benefit more from
+explicit velocity on SDD than on ETH/UCY, likely because SDD includes more
+turning and speed variation. Transformer performance remains strong but no
+longer separates from the recurrent models as much as it does on ETH/UCY.
+
+The SDD results also help explain why transfer is not uniformly beneficial.
+SDD supplies many more trajectories, but its aerial viewpoint, broader scene
+types, and mixed agent behaviours do not perfectly match ETH/UCY. Pretraining
+therefore learns transferable low-level motion patterns while still requiring
+target-domain fine-tuning before evaluation on ETH/UCY.
+
+\subsection{Transfer and Fine-Tuning}
+
+Table~\ref{tab:finetune} compares scratch ETH/UCY training with SDD pretraining
+followed by ETH/UCY and synthetic fine-tuning. The recurrent models improve by
+5 to 10 percent. The Transformer barely changes, moving from 0.568 m to 0.570
+m. Diffusion improves on ADE but not on diversity.
+
+\begin{table}[t]
+\caption{SDD pretraining then ETH/UCY and synthetic fine-tuning. Values are
+ETH/UCY ADE in metres averaged over five scenes.}
+\label{tab:finetune}
+\centering
+\footnotesize
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+Model & Scratch & SDD then Synth FT & $\Delta$ (\%) \\
+\midrule
+Social-LSTM & 0.596 & \textbf{0.537} & $-9.9$ \\
+SLSTM+V & 0.585 & 0.555 & $-5.1$ \\
+Social-GRU & 0.586 & 0.549 & $-6.3$ \\
+Transformer & \textbf{0.568} & 0.570 & $+0.4$ \\
+Diffusion & 0.579 & 0.535 & $-7.6$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+This supports a practical conclusion: transfer helps most when the architecture
+still needs broad motion regularisation. The recurrent models use SDD as a
+regulariser and then adapt to ETH/UCY. The Transformer already extracts most of
+the relevant pattern from the small ETH/UCY training set, so the extra data does
+not help. This aligns with transfer-learning evidence that more source data
+helps only when the source and target structure match the model being
+fine-tuned~\cite{kornblith2019better}.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=0.88\columnwidth]{figures/fig_generalisation.png}
+  \caption{Fine-tuning comparison showing that SDD pretraining helps recurrent
+  models more than the Transformer under the current protocol.}
+  \label{fig:generalisation}
+\end{figure}
+
+\subsection{Integrated Discussion}
+
+The three completed parts fit together. Synthetic data broadens the training
+support, but must be filtered because unfiltered generation can distort turning
+statistics. The residual world model gives a simple planning-facing motion
+model, and the held-out eth result shows that a learned correction over
+constant velocity improves prediction. Muhammad's predictor benchmark then separates
+point accuracy, diversity, and calibration: the Transformer is the best point
+predictor and gives the lowest NLL, while Trajectron++ is better at covering
+multiple possible futures.
+
+The open problem is closed-loop validation. A conformal or PPO safety-planning
+layer cannot simply consume the best ADE model and assume safety follows.
+Prediction errors must be calibrated, uncertainty must be composed over agents
+and timesteps, and the resulting safety sets must still leave feasible motion.
+This is exactly why the world model and predictor benchmark should be treated
+as components of a navigation stack, not as isolated leaderboards.
+
+\subsection{How The Components Answer The Objectives}
+
+The original project objective was safe and efficient navigation in human
+crowds. The completed work does not yet prove closed-loop navigation safety,
+but it builds the part of the stack that determines what the planner believes
+about people. That belief is central: if the predicted pedestrian motion is
+wrong, every downstream safety decision is made from the wrong state of the
+world. The current report therefore answers a narrower but necessary question:
+which prediction and world-model components are suitable inputs to a safety
+aware navigation system?
+
+The synthetic generator addresses data scarcity. ETH/UCY is valuable because it
+is a standard benchmark, but it is too small to cover the crowd configurations a
+robot might encounter. The Social-CVAE gives a way to generate additional
+future trajectories conditioned on observed motion. Its limitation, smoother
+turning behaviour, is not a failure of the idea; it is evidence that synthetic
+data needs distributional checks before being trusted. For this reason, the report
+evaluates speed, acceleration, and turning statistics rather than only ADE.
+
+The residual world model addresses planning speed and interpretability. A
+planner does not always need a heavy distributional model at every control
+cycle. It may need a fast estimate of how nearby pedestrians will move if the
+robot proposes an action. The residual formulation is attractive because its
+failure mode is easier to reason about than a fully learned black-box forecast:
+the output equals constant velocity plus a correction. When the correction
+becomes large, the planner or safety layer can treat the forecast as less
+trustworthy.
+
+The predictor benchmark addresses accuracy, diversity, and calibration. The
+Transformer is a strong candidate when the downstream system wants a sharp mean
+forecast and compact uncertainty. Trajectron++ is a stronger candidate when the
+downstream system needs to cover multiple plausible futures. The diffusion
+model provides an implementation lesson: stochastic generation alone does
+not guarantee meaningful diversity. If conditioning overwhelms the denoising
+process, the model may generate many samples clustered around the same mean.
+
+Benjamin's safety/planning interface ties these findings back to robot control.
+For the interface, the key question is not simply which model has the
+lowest ADE. A PPO policy may propose a smooth and efficient action, but the
+safety interface needs to know whether that action remains safe under the
+forecasted pedestrian uncertainty. The predictor format changes this check. A
+Gaussian predictor supports residual-radius calibration; a sample-based model
+supports hulls or empirical occupancy; a multi-modal GMM supports level-set
+style reasoning. The report therefore prepares the comparison Benjamin needs
+for choosing which predictor output to connect to the planner.
+
+\subsection{Planned Closed-Loop Evaluation}
+
+The next experimental step is to run the same predictor choices inside a
+navigation simulator. Each episode should place the robot in a start-goal task
+with moving pedestrians. At each control cycle, the predictor receives the
+recent pedestrian histories, the nominal PPO/diffusion policy proposes an
+action, and the safety interface either accepts that action or replaces it with
+a safer one. This setup would directly test whether the open-loop differences
+reported here matter for robot behaviour.
+
+The first closed-loop metric should be collision rate. It is the most basic
+safety measure, but it is not sufficient by itself. A robot that never collides
+because it refuses to move has failed the navigation task. The second metric should therefore be
+success rate or time-to-goal. The third should be freezing rate, measured as the
+fraction of time the robot remains nearly stationary despite having a reachable
+goal. The initial survey identified conservatism as a common failure
+mode of safer systems.
+
+The fourth metric should be intervention frequency. If the safety interface
+overrides the nominal policy at nearly every timestep, the predictor and policy
+are not aligned. If it never intervenes, the safety layer may be too weak or the
+test scenarios too easy. A successful system should have low collisions, reasonable
+time-to-goal, and interventions concentrated in genuinely risky scenes.
+
+The fifth metric should be achieved control rate. A predictor that is accurate
+but slow can cause stale decisions. The benchmark should therefore report the
+end-to-end time per control cycle, not only the model forward-pass time. This
+will make it possible to compare the lightweight residual world model,
+Transformer predictor, Trajectron++ samples, and diffusion samples under the
+same real-time budget.
+
+Finally, the closed-loop evaluation should include degraded sensing. Occlusions
+and missed detections are normal in crowds. Testing only with perfect
+pedestrian tracks would overstate safety. A practical evaluation should remove
+or perturb some pedestrian observations and then measure whether the conformal
+safety interface remains robust or becomes overly conservative.
+
+\subsection{Limitations and Remaining Work}
+
+Several limitations affect the strength of the conclusions. First, ETH/UCY is a
+small benchmark. Leave-one-scene-out testing helps, but five scenes cannot cover
+the full variety of real crowd behaviour. The synthetic generator addresses
+data scarcity, yet its smoother turning distribution shows that synthetic data
+can also introduce bias. A stronger augmentation study would compare real-only,
+real-plus-unfiltered-synthetic, and real-plus-filtered-synthetic training across
+all ETH/UCY scenes.
+
+Second, the residual world model was evaluated only on held-out eth in the
+current report. The result is promising because it improves over constant
+velocity, but it should be repeated across hotel, univ, zara1, and zara2 before
+being treated as a general dynamics model. The fact that the social residual
+model underperforms the simpler residual model also deserves more analysis:
+neighbour context may help only in specific density regimes, or the pooling
+method may be too crude to represent interaction cues.
+
+Third, the predictor benchmark is open-loop. It measures future trajectory
+accuracy given observed pedestrian histories, but it does not yet measure what
+happens when a robot acts on those forecasts. In closed loop, a small prediction
+delay, a missed pedestrian, or a conservative conformal radius can change
+navigation behaviour. The next evaluation should therefore report collision
+rate, time-to-goal, intervention frequency, planner latency, and freezing rate
+with Benjamin's safety interface connected.
+
+Finally, the current work treats perception as already solved. Real robots must
+track people under occlusions, noisy detections, identity switches, and limited
+field of view. Those errors would change both the predictor input and the
+safety calibration residuals. A deployment-ready system should therefore
+calibrate not only trajectory prediction error, but also tracking and execution
+error.
+
+\section{Conclusions}
+
+This report presents the design and evaluation work completed so far for safe
+robot navigation in human crowds. Vaibhav's Social-CVAE generator produces
+synthetic trajectories that can augment ETH/UCY, but the generated turning
+statistics show why filtering is necessary. His residual crowd world model
+improves over constant velocity on held-out eth, reducing ADE by 11.5 percent
+and FDE by 16.0 percent. This supports its use as a lightweight dynamics model
+for planning-facing pedestrian forecasts, although the evidence should be extended
+to all ETH/UCY splits.
+
+Muhammad's predictor benchmark shows that model choice depends strongly on the
+metric. The Transformer gives the best ETH/UCY point accuracy and NLL, with ADE
+0.568 m and NLL 1.54. Trajectron++ gives the best multi-modal coverage, with
+minADE@20 0.385 m. Diffusion becomes competitive on ADE/FDE after the shared
+encoder fix, but its samples still lack diversity. SDD pretraining improves
+recurrent models by 5 to 10 percent, while the Transformer gains little.
+
+The main lesson is that prediction quality is multi-dimensional. A safe crowd
+navigation system needs data diversity, a planning-facing world model,
+accurate point forecasts, calibrated uncertainty, and closed-loop validation.
+The next step is to connect these prediction outputs to Benjamin's
+conformal/PPO safety-planning interface and evaluate the full stack under
+collision, efficiency, latency, and conservatism metrics.
+
+\bibliographystyle{ieeetr}
+\bibliography{references}
+
+\end{document}

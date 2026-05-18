@@ -92,7 +92,7 @@ def evaluate(model, val_loader, device, K=20):
 def train(holdout, epochs=200, batch_size=64, lr=1e-3, hidden_size=128,
           embed_size=64, pooling_radius=2.0, max_neighbours=5,
           eval_every=10, K_eval=20, device_str="cuda", use_velocity=False,
-          use_v2=False):
+          use_v2=False, pretrain_ckpt=None):
 
     device   = torch.device(device_str if torch.cuda.is_available() else "cpu")
     ckpt_dir = os.path.join(WORK, "checkpoints")
@@ -112,6 +112,12 @@ def train(holdout, epochs=200, batch_size=64, lr=1e-3, hidden_size=128,
     model = ModelClass(obs_len=8, pred_len=12, hidden_size=hidden_size,
                        embed_size=embed_size, pooling_radius=pooling_radius,
                        use_velocity=use_velocity).to(device)
+
+    if pretrain_ckpt is not None:
+        ckpt = torch.load(pretrain_ckpt, map_location=device)
+        model.load_state_dict(ckpt["model_state"])
+        print(f"  Loaded pretrained weights from {pretrain_ckpt}")
+
     optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=1e-4)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
         optimizer, mode="min", patience=5, factor=0.5)
@@ -148,7 +154,8 @@ def train(holdout, epochs=200, batch_size=64, lr=1e-3, hidden_size=128,
             if metrics["ade"] < best_ade:
                 best_ade = metrics["ade"]; patience_counter = 0
                 suffix = ("v2" if use_v2 else "") + ("v" if use_velocity else "")
-                ckpt_path = os.path.join(ckpt_dir, f"social_gru{suffix}_{holdout}.pt")
+                ft_prefix = "ft_" if pretrain_ckpt is not None else ""
+                ckpt_path = os.path.join(ckpt_dir, f"{ft_prefix}social_gru{suffix}_{holdout}.pt")
                 torch.save({"epoch": epoch, "model_state": model.state_dict(),
                             "ade": best_ade, "holdout": holdout,
                             "hparams": {"hidden_size": hidden_size, "embed_size": embed_size,
@@ -195,9 +202,11 @@ if __name__ == "__main__":
     parser.add_argument("--device",     type=str,   default="cuda")
     parser.add_argument("--velocity",   action="store_true")
     parser.add_argument("--v2",         action="store_true", help="Use bidirectional GRU encoder")
+    parser.add_argument("--pretrain_ckpt", type=str, default=None,
+                        help="Path to SDD pretrained checkpoint to fine-tune from")
     args = parser.parse_args()
     train(holdout=args.holdout, epochs=args.epochs, batch_size=args.batch_size,
           lr=args.lr, hidden_size=args.hidden, embed_size=args.embed,
           pooling_radius=args.radius, max_neighbours=args.max_nb,
           eval_every=args.eval_every, K_eval=args.K, device_str=args.device,
-          use_velocity=args.velocity, use_v2=args.v2)
+          use_velocity=args.velocity, use_v2=args.v2, pretrain_ckpt=args.pretrain_ckpt)

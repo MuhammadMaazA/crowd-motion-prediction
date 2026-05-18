@@ -1,0 +1,131 @@
+\relax 
+\providecommand\hyper@newdestlabel[2]{}
+\providecommand\HyperFirstAtBeginDocument{\AtBeginDocument}
+\HyperFirstAtBeginDocument{\ifx\hyper@anchor\@undefined
+\global\let\oldcontentsline\contentsline
+\gdef\contentsline#1#2#3#4{\oldcontentsline{#1}{#2}{#3}}
+\global\let\oldnewlabel\newlabel
+\gdef\newlabel#1#2{\newlabelxx{#1}#2}
+\gdef\newlabelxx#1#2#3#4#5#6{\oldnewlabel{#1}{{#2}{#3}}}
+\AtEndDocument{\ifx\hyper@anchor\@undefined
+\let\contentsline\oldcontentsline
+\let\newlabel\oldnewlabel
+\fi}
+\fi}
+\global\let\hyper@last\relax 
+\gdef\HyperFirstAtBeginDocument#1{#1}
+\providecommand\HyField@AuxAddToFields[1]{}
+\providecommand\HyField@AuxAddToCoFields[2]{}
+\@writefile{toc}{\contentsline {section}{\numberline {I}Introduction}{1}{section.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {I-A}}Design Rationale From The Initial Survey}{1}{subsection.1.1}\protected@file@percent }
+\citation{angelopoulos2021gentle}
+\citation{robicquet2016learning}
+\@writefile{lot}{\contentsline {table}{\numberline {I}{\ignorespaces Planned milestones and submission status.}}{2}{table.1}\protected@file@percent }
+\newlabel{tab:timeline}{{I}{2}{Planned milestones and submission status}{table.1}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {II}Project Management}{2}{section.2}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {1}{\ignorespaces Synthetic data and world-model pipeline used to support downstream predictor training and eventual safety-aware navigation.}}{2}{figure.1}\protected@file@percent }
+\newlabel{fig:system_overview}{{1}{2}{Synthetic data and world-model pipeline used to support downstream predictor training and eventual safety-aware navigation}{figure.1}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {II-A}}Deliverable Status}{2}{subsection.2.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {III}Methodology and System Design}{2}{section.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {III-A}}System Overview}{2}{subsection.3.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {III-B}}Synthetic Data Generation}{2}{subsection.3.2}\protected@file@percent }
+\citation{alahi2016social}
+\@writefile{lof}{\contentsline {figure}{\numberline {2}{\ignorespaces Social-CVAE generator. The posterior uses future trajectories during training; at generation time, the conditional prior samples futures from the observed trajectory and social context.}}{3}{figure.2}\protected@file@percent }
+\newlabel{fig:cvae}{{2}{3}{Social-CVAE generator. The posterior uses future trajectories during training; at generation time, the conditional prior samples futures from the observed trajectory and social context}{figure.2}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {III-C}}Residual Crowd World Model}{3}{subsection.3.3}\protected@file@percent }
+\newlabel{eq:residual_model}{{2}{3}{Residual Crowd World Model}{equation.3.2}{}}
+\citation{alahi2016social}
+\citation{cho2014learning,schuster1997bidirectional}
+\citation{vaswani2017attention,xiong2020layer}
+\citation{ho2020denoising}
+\citation{song2021denoising}
+\citation{salzmann2020trajectron}
+\@writefile{lof}{\contentsline {figure}{\numberline {3}{\ignorespaces Residual crowd world model. The final pedestrian forecast combines a constant-velocity prior with a learned residual correction from target and social context.}}{4}{figure.3}\protected@file@percent }
+\newlabel{fig:world_model}{{3}{4}{Residual crowd world model. The final pedestrian forecast combines a constant-velocity prior with a learned residual correction from target and social context}{figure.3}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {III-D}}Trajectory Prediction Models}{4}{subsection.3.4}\protected@file@percent }
+\newlabel{sec:tpm}{{\mbox  {III-D}}{4}{Trajectory Prediction Models}{subsection.3.4}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {4}{\ignorespaces Trajectory Transformer architecture used in the prediction benchmark.}}{4}{figure.4}\protected@file@percent }
+\newlabel{fig:transformer}{{4}{4}{Trajectory Transformer architecture used in the prediction benchmark}{figure.4}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {III-E}}Transfer Learning}{4}{subsection.3.5}\protected@file@percent }
+\newlabel{sec:transfer}{{\mbox  {III-E}}{4}{Transfer Learning}{subsection.3.5}{}}
+\citation{pellegrini2009you}
+\citation{lerner2007crowds}
+\citation{robicquet2016learning}
+\@writefile{lot}{\contentsline {table}{\numberline {II}{\ignorespaces Main predictor design choices.}}{5}{table.2}\protected@file@percent }
+\newlabel{tab:model_design}{{II}{5}{Main predictor design choices}{table.2}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {5}{\ignorespaces Two-stage transfer: SDD pretraining followed by ETH/UCY and synthetic fine-tuning.}}{5}{figure.5}\protected@file@percent }
+\newlabel{fig:finetune}{{5}{5}{Two-stage transfer: SDD pretraining followed by ETH/UCY and synthetic fine-tuning}{figure.5}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {III-F}}Downstream Safety Interface}{5}{subsection.3.6}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {6}{\ignorespaces Benjamin's downstream safety-planning interface. The report evaluates the prediction inputs to this interface; closed-loop navigation metrics remain the next validation step.}}{5}{figure.6}\protected@file@percent }
+\newlabel{fig:safety_interface}{{6}{5}{Benjamin's downstream safety-planning interface. The report evaluates the prediction inputs to this interface; closed-loop navigation metrics remain the next validation step}{figure.6}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {III}{\ignorespaces Datasets and splits used in the report.}}{5}{table.3}\protected@file@percent }
+\newlabel{tab:datasets}{{III}{5}{Datasets and splits used in the report}{table.3}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {IV}Experimental Setup}{5}{section.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {IV-A}}Synthetic Generation Setup}{5}{subsection.4.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {IV-B}}World Model Setup}{5}{subsection.4.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {IV-C}}Predictor Benchmark Setup}{5}{subsection.4.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {V}Results and Discussion}{6}{section.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {V-A}}Synthetic Data Generation Results}{6}{subsection.5.1}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {IV}{\ignorespaces Synthetic trajectory generation results. Lower ADE/FDE values are better.}}{6}{table.4}\protected@file@percent }
+\newlabel{tab:synthetic_generation_results}{{IV}{6}{Synthetic trajectory generation results. Lower ADE/FDE values are better}{table.4}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {7}{\ignorespaces Generated trajectory diversity from the same observed past. The placeholder is replaced when Vaibhav's PNG is copied into the figures directory.}}{6}{figure.7}\protected@file@percent }
+\newlabel{fig:generated_diversity}{{7}{6}{Generated trajectory diversity from the same observed past. The placeholder is replaced when Vaibhav's PNG is copied into the figures directory}{figure.7}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {8}{\ignorespaces Real and synthetic motion distributions for speed, acceleration, turning angle, and nearest-neighbour distance.}}{6}{figure.8}\protected@file@percent }
+\newlabel{fig:motion_distributions}{{8}{6}{Real and synthetic motion distributions for speed, acceleration, turning angle, and nearest-neighbour distance}{figure.8}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {V-B}}Residual Crowd World Model Results}{6}{subsection.5.2}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {V}{\ignorespaces Residual crowd world model results on held-out eth after fine-tuning with real ETH/UCY and filtered synthetic trajectories.}}{6}{table.5}\protected@file@percent }
+\newlabel{tab:residual_model_results}{{V}{6}{Residual crowd world model results on held-out eth after fine-tuning with real ETH/UCY and filtered synthetic trajectories}{table.5}{}}
+\citation{mangalam2020not}
+\citation{yuan2021agentformer}
+\citation{mao2023leapfrog}
+\citation{alahi2016social}
+\citation{salzmann2020trajectron}
+\@writefile{lof}{\contentsline {figure}{\numberline {9}{\ignorespaces Effect of angle-based filtering on synthetic trajectory statistics.}}{7}{figure.9}\protected@file@percent }
+\newlabel{fig:filtering_comparison}{{9}{7}{Effect of angle-based filtering on synthetic trajectory statistics}{figure.9}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {V-C}}ETH/UCY Predictor Results}{7}{subsection.5.3}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {10}{\ignorespaces Training behaviour of residual world models on the held-out eth split. The placeholders are replaced when Vaibhav's PNGs are copied into the figures directory.}}{7}{figure.10}\protected@file@percent }
+\newlabel{fig:residual_training_curves}{{10}{7}{Training behaviour of residual world models on the held-out eth split. The placeholders are replaced when Vaibhav's PNGs are copied into the figures directory}{figure.10}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {VI}{\ignorespaces ETH/UCY leave-one-out results averaged over five scenes. mADE/mFDE denote minADE@20/minFDE@20. Best values are bold.}}{7}{table.6}\protected@file@percent }
+\newlabel{tab:ethucy}{{VI}{7}{ETH/UCY leave-one-out results averaged over five scenes. mADE/mFDE denote minADE@20/minFDE@20. Best values are bold}{table.6}{}}
+\citation{kornblith2019better}
+\@writefile{lot}{\contentsline {table}{\numberline {VII}{\ignorespaces Per-scene ETH/UCY ADE. Best value per scene is bold.}}{8}{table.7}\protected@file@percent }
+\newlabel{tab:per_scene_ade}{{VII}{8}{Per-scene ETH/UCY ADE. Best value per scene is bold}{table.7}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {11}{\ignorespaces Average NLL comparison on ETH/UCY for probabilistic predictors. Lower values indicate better likelihood under the reported output distribution.}}{8}{figure.11}\protected@file@percent }
+\newlabel{fig:nll}{{11}{8}{Average NLL comparison on ETH/UCY for probabilistic predictors. Lower values indicate better likelihood under the reported output distribution}{figure.11}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {V-D}}SDD Results}{8}{subsection.5.4}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {12}{\ignorespaces Qualitative prediction on zara1. The examples show that per-scene behaviour can differ from the aggregate ETH/UCY ranking.}}{8}{figure.12}\protected@file@percent }
+\newlabel{fig:qualitative}{{12}{8}{Qualitative prediction on zara1. The examples show that per-scene behaviour can differ from the aggregate ETH/UCY ranking}{figure.12}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {VIII}{\ignorespaces Diffusion ablation on ETH/UCY. Removing the encoder detach made the diffusion model usable as a predictor without improving diversity.}}{8}{table.8}\protected@file@percent }
+\newlabel{tab:diffusion_ablation}{{VIII}{8}{Diffusion ablation on ETH/UCY. Removing the encoder detach made the diffusion model usable as a predictor without improving diversity}{table.8}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {V-E}}Transfer and Fine-Tuning}{8}{subsection.5.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {V-F}}Integrated Discussion}{8}{subsection.5.6}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {IX}{\ignorespaces SDD leave-one-out results averaged over eight scenes. Best values are bold.}}{9}{table.9}\protected@file@percent }
+\newlabel{tab:sdd}{{IX}{9}{SDD leave-one-out results averaged over eight scenes. Best values are bold}{table.9}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {X}{\ignorespaces SDD pretraining then ETH/UCY and synthetic fine-tuning. Values are ETH/UCY ADE in metres averaged over five scenes.}}{9}{table.10}\protected@file@percent }
+\newlabel{tab:finetune}{{X}{9}{SDD pretraining then ETH/UCY and synthetic fine-tuning. Values are ETH/UCY ADE in metres averaged over five scenes}{table.10}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {V-G}}How The Components Answer The Objectives}{9}{subsection.5.7}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {13}{\ignorespaces Fine-tuning comparison showing that SDD pretraining helps recurrent models more than the Transformer under the current protocol.}}{9}{figure.13}\protected@file@percent }
+\newlabel{fig:generalisation}{{13}{9}{Fine-tuning comparison showing that SDD pretraining helps recurrent models more than the Transformer under the current protocol}{figure.13}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {V-H}}Planned Closed-Loop Evaluation}{9}{subsection.5.8}\protected@file@percent }
+\bibstyle{ieeetr}
+\bibdata{references}
+\bibcite{angelopoulos2021gentle}{1}
+\bibcite{robicquet2016learning}{2}
+\bibcite{alahi2016social}{3}
+\bibcite{cho2014learning}{4}
+\bibcite{schuster1997bidirectional}{5}
+\bibcite{vaswani2017attention}{6}
+\bibcite{xiong2020layer}{7}
+\bibcite{ho2020denoising}{8}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {V-I}}Limitations and Remaining Work}{10}{subsection.5.9}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {VI}Conclusions}{10}{section.6}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{References}{10}{section*.1}\protected@file@percent }
+\bibcite{song2021denoising}{9}
+\bibcite{salzmann2020trajectron}{10}
+\bibcite{pellegrini2009you}{11}
+\bibcite{lerner2007crowds}{12}
+\bibcite{mangalam2020not}{13}
+\bibcite{yuan2021agentformer}{14}
+\bibcite{mao2023leapfrog}{15}
+\bibcite{kornblith2019better}{16}
+\gdef \@abspage@last{11}

@@ -102,7 +102,7 @@ def evaluate(model, val_loader, device, K=20):
 
 def train(holdout, epochs=200, batch_size=64, lr=1e-3, d_model=128, nhead=4,
           T=100, ddim_steps=20, lambda_ddpm=0.1, max_neighbours=5,
-          eval_every=10, K_eval=20, device_str="cuda"):
+          eval_every=10, K_eval=20, device_str="cuda", pretrain_ckpt=None):
 
     device   = torch.device(device_str if torch.cuda.is_available() else "cpu")
     ckpt_dir = os.path.join(WORK, "checkpoints")
@@ -125,6 +125,11 @@ def train(holdout, epochs=200, batch_size=64, lr=1e-3, d_model=128, nhead=4,
         max_nb=max_neighbours, T=T,
         ddim_steps=ddim_steps, lambda_ddpm=lambda_ddpm,
     ).to(device)
+
+    if pretrain_ckpt is not None:
+        ckpt = torch.load(pretrain_ckpt, map_location=device)
+        model.load_state_dict(ckpt["model_state"])
+        print(f"  Loaded pretrained weights from {pretrain_ckpt}")
 
     optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=1e-4)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
@@ -169,7 +174,8 @@ def train(holdout, epochs=200, batch_size=64, lr=1e-3, d_model=128, nhead=4,
 
             if metrics["ade"] < best_ade:
                 best_ade = metrics["ade"]; patience_counter = 0
-                ckpt_path = os.path.join(ckpt_dir, f"diffusion_{holdout}.pt")
+                ft_prefix = "ft_" if pretrain_ckpt is not None else ""
+                ckpt_path = os.path.join(ckpt_dir, f"{ft_prefix}diffusion_{holdout}.pt")
                 torch.save({
                     "epoch": epoch, "model_state": model.state_dict(),
                     "optimizer": optimizer.state_dict(),
@@ -219,10 +225,12 @@ if __name__ == "__main__":
     parser.add_argument("--eval_every",  type=int,   default=10)
     parser.add_argument("--K",           type=int,   default=20)
     parser.add_argument("--device",      type=str,   default="cuda")
+    parser.add_argument("--pretrain_ckpt", type=str, default=None,
+                        help="Path to SDD pretrained checkpoint to fine-tune from")
     args = parser.parse_args()
 
     train(holdout=args.holdout, epochs=args.epochs, batch_size=args.batch_size,
           lr=args.lr, d_model=args.d_model, nhead=args.nhead,
           T=args.T, ddim_steps=args.ddim_steps, lambda_ddpm=args.lambda_ddpm,
           max_neighbours=args.max_nb, eval_every=args.eval_every,
-          K_eval=args.K, device_str=args.device)
+          K_eval=args.K, device_str=args.device, pretrain_ckpt=args.pretrain_ckpt)

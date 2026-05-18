@@ -1,0 +1,89 @@
+\begin{tikzpicture}[
+  node distance=0.38cm,
+  pGray/.style={rectangle, rounded corners=2pt,
+    minimum width=2.4cm, minimum height=0.72cm,
+    align=center, text width=2.2cm, inner sep=3pt,
+    fill={rgb,255:red,247;green,250;blue,252},
+    draw={rgb,255:red,74;green,85;blue,104},
+    line width=0.4pt, font=\scriptsize},
+  pTeal/.style={rectangle, rounded corners=2pt,
+    minimum width=5.3cm, minimum height=0.78cm,
+    align=center, text width=5.1cm, inner sep=4pt,
+    fill={rgb,255:red,237;green,242;blue,247},
+    draw={rgb,255:red,44;green,62;blue,80},
+    line width=0.4pt, font=\scriptsize},
+  pPurp/.style={rectangle, rounded corners=2pt,
+    minimum width=5.3cm, minimum height=0.78cm,
+    align=center, text width=5.1cm, inner sep=4pt,
+    fill={rgb,255:red,237;green,233;blue,254},
+    draw={rgb,255:red,83;green,74;blue,183},
+    line width=0.4pt, font=\scriptsize},
+  pCoral/.style={rectangle, rounded corners=2pt,
+    minimum width=5.3cm, minimum height=0.78cm,
+    align=center, text width=5.1cm, inner sep=4pt,
+    fill={rgb,255:red,255;green,245;blue,245},
+    draw={rgb,255:red,153;green,61;blue,30},
+    line width=0.4pt, font=\scriptsize},
+  pFinal/.style={rectangle, rounded corners=2pt,
+    minimum width=5.3cm, minimum height=0.78cm,
+    align=center, text width=5.1cm, inner sep=4pt,
+    fill={rgb,255:red,44;green,62;blue,80},
+    draw={rgb,255:red,44;green,62;blue,80},
+    text=white, line width=0.4pt, font=\scriptsize\bfseries},
+  parr/.style={-{Stealth[length=3pt,width=2.5pt]},
+    line width=0.45pt,
+    color={rgb,255:red,74;green,85;blue,104}},
+]
+
+  %% ── Input nodes ─────────────────────────────────────────────
+  \node[pGray] (focal) {%
+    {\bfseries Focal traj.} $X$\\[1pt]
+    {\tiny 8 steps, 2-D}};
+  \node[pGray, right=0.5cm of focal] (nbrs) {%
+    {\bfseries Neighbours} $X^n_{1:5}$\\[1pt]
+    {\tiny ${\leq}5{\times}8$ tokens}};
+
+  %% ── Focal encoder (narrow, directly below focal) ────────────
+  \node[pTeal, minimum width=2.4cm, text width=2.2cm,
+    below=0.45cm of focal] (enc) {%
+    {\bfseries Self-attn enc.}\\[-2pt]
+    {\tiny 2-layer, pre-LN}};
+
+  %% ── Neighbour flatten (narrow, directly below nbrs) ─────────
+  \node[pPurp, minimum width=2.4cm, text width=2.2cm,
+    below=0.45cm of nbrs] (flat) {%
+    {\bfseries Flatten + mask}\\[-2pt]
+    {\tiny 40 tokens}};
+
+  %% ── Memory (full width, centred) ────────────────────────────
+  \node[pTeal, below=0.52cm of enc, xshift=1.45cm] (mem) {%
+    {\bfseries Memory} (48 tokens)\\[-2pt]
+    {\tiny focal (8) $\oplus$ neighbour (40);\;\;$d_\text{model}{=}128$}};
+
+  %% ── Learned queries ─────────────────────────────────────────
+  \node[pPurp, below=0.38cm of mem] (qry) {%
+    {\bfseries 12 Learned Query Tokens}\\[-2pt]
+    {\tiny one per prediction step}};
+
+  %% ── Cross-attention decoder ─────────────────────────────────
+  \node[pCoral, below=0.38cm of qry] (dec) {%
+    {\bfseries Cross-Attn Decoder}\\[-2pt]
+    {\tiny 2-layer pre-LN;\;queries cross-attend to Memory}};
+
+  %% ── Output ──────────────────────────────────────────────────
+  \node[pFinal, below=0.38cm of dec] (out) {%
+    Bivariate Gaussian $(\mu,\Sigma){\times}12$ steps};
+
+  %% ── Arrows ───────────────────────────────────────────────────
+  \draw[parr] (focal.south) -- (enc.north);
+  \draw[parr] (nbrs.south)  -- (flat.north);
+
+  \draw[parr] (enc.south)  -- ++(0,-0.28)
+    -| ([xshift=-0.8cm]mem.north);
+  \draw[parr] (flat.south) -- ++(0,-0.28)
+    -| ([xshift=+0.8cm]mem.north);
+
+  \foreach \f/\t in {mem/qry, qry/dec, dec/out}
+    \draw[parr] (\f.south) -- (\t.north);
+
+\end{tikzpicture}
